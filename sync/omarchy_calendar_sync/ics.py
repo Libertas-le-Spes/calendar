@@ -32,6 +32,8 @@ from .localzone import resolve_local_timezone
 from .resources import build_event
 from .time_budget import TimeBudgetSpent, time_budget
 
+ONE_DAY = timedelta(days=1)
+
 MINIMUM_ICALENDAR = (7, 2, 2)
 
 
@@ -307,7 +309,7 @@ class Ics:
         start = datetime.fromisoformat(time_min)
         end = datetime.fromisoformat(time_max)
         try:
-            affordable, left_out = affordable_calendar(icalendar, calendar, start.date(), end.date())
+            affordable, left_out = affordable_calendar(icalendar, calendar, start.date() - ONE_DAY, end.date() + ONE_DAY)
             if left_out:
                 print("skipping %d repeating events in %s: they cannot be read or repeat too often to expand" % (left_out, calendar_id))
             occurrences = occurrences_in_window(rie, affordable, start, end)

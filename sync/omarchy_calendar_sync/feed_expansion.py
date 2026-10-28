@@ -12,7 +12,7 @@ as long as it lasts.
 """
 
 from .errors import CalendarUnreadable, TooManyEvents
-from .limits import EVENTS_PER_CALENDAR, EXPANSION_SECONDS, REPEAT_STEPS_PER_CALENDAR, REPEAT_STEPS_PER_SERIES
+from .limits import DATES_BEFORE_EXPANSION, EVENTS_PER_CALENDAR, EXPANSION_SECONDS, REPEAT_STEPS_PER_CALENDAR, REPEAT_STEPS_PER_SERIES
 from .repeat_cost import series_cost, window_dates
 from .time_budget import TimeBudgetSpent, time_budget
 from .window_events import is_single, touches
@@ -85,7 +85,7 @@ def _refuse_when_too_much(series, left_out):
             dates += series_weight.dates
     if cost > REPEAT_STEPS_PER_CALENDAR:
         raise CalendarUnreadable("its repeating events would take too long to expand")
-    if dates > EVENTS_PER_CALENDAR:
+    if dates > DATES_BEFORE_EXPANSION:
         raise TooManyEvents()
 
 

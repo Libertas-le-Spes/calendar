@@ -18,10 +18,23 @@ def is_single(vevent):
 
 
 def touches(vevent, window_first, window_last):
-    """True when a single event lasts into the days between the two."""
+    """True when a single event lasts into the days between the two.
+
+    An event whose end cannot be worked out is kept rather than dropped.
+    """
     first_day = start_day(vevent)
-    end = vevent.get("DTEND")
-    last_day = first_day
-    if end is not None:
-        last_day = day_of(end.dt)
+    try:
+        last_day = _last_day(vevent, first_day)
+    except (ValueError, TypeError, OverflowError, AttributeError):
+        return first_day <= window_last
     return first_day <= window_last and last_day >= window_first
+
+
+def _last_day(vevent, first_day):
+    end = vevent.get("DTEND")
+    if end is not None:
+        return day_of(end.dt)
+    duration = vevent.get("DURATION")
+    if duration is not None:
+        return day_of(vevent.get("DTSTART").dt + duration.dt)
+    return first_day

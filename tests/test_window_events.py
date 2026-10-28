@@ -1,5 +1,5 @@
 import unittest
-from datetime import date
+from datetime import date, timedelta
 
 import icalendar
 
@@ -34,6 +34,25 @@ class TestWhichEventsArePlain(unittest.TestCase):
         moved = vevent(date(2026, 10, 9))
         moved.add("RECURRENCE-ID", date(2026, 10, 8))
         self.assertFalse(window_events.is_single(moved))
+
+
+class TestEventsWithADuration(unittest.TestCase):
+    WINDOW = (date(2026, 10, 21), date(2026, 12, 27))
+
+    def test_an_event_whose_duration_runs_into_the_window_touches_it(self):
+        event = vevent(date(2026, 10, 15))
+        event.add("DURATION", timedelta(days=20))
+        self.assertTrue(window_events.touches(event, *self.WINDOW))
+
+    def test_an_event_whose_duration_ends_before_the_window_does_not_touch_it(self):
+        event = vevent(date(2026, 10, 1))
+        event.add("DURATION", timedelta(days=2))
+        self.assertFalse(window_events.touches(event, *self.WINDOW))
+
+    def test_an_event_whose_end_cannot_be_read_is_kept(self):
+        event = vevent(date(2026, 10, 1))
+        event["DTEND"] = icalendar.vText("not a date")
+        self.assertTrue(window_events.touches(event, *self.WINDOW))
 
 
 if __name__ == "__main__":

@@ -229,8 +229,18 @@ test('notificationArg keeps option-looking text as text', () => {
   assert.equal(Model.notificationArg(''), '')
 })
 
-test('reminderBody: a room wins over the host of a link to a service it does not know', () => {
+test('reminderBody: the room and the host a link to an unknown service opens are both named', () => {
   const event_ = event({ meetingUrl: 'https://intranet.example.invalid/room', location: 'Room 4' })
+  assert.equal(Model.reminderBody(event_, START - 10 * MIN, 'en', clock, weekday), '13:00–13:45 · Room 4 · intranet.example.invalid')
+})
+
+test('reminderBody: a location that names a service cannot hide where the click goes', () => {
+  const event_ = event({ meetingUrl: 'https://login-check.example.invalid/j/1', location: 'zoom.us/j/81234567890' })
+  assert.ok(Model.reminderBody(event_, START - 10 * MIN, 'en', clock, weekday).endsWith('login-check.example.invalid'))
+})
+
+test('reminderBody: with no link, the room alone is named', () => {
+  const event_ = event({ location: 'Room 4' })
   assert.equal(Model.reminderBody(event_, START - 10 * MIN, 'en', clock, weekday), '13:00–13:45 · Room 4')
 })
 

@@ -1110,8 +1110,11 @@ function reminderPlace(event) {
   var service = meetingService(url)
   if (service) return service
   var location = truncateTitle(text(event.location).trim(), 48)
-  if (location) return location
-  return meetingHost(url)
+  var host = meetingHost(url)
+  if (!url) return location
+  if (!host) return location
+  if (!location) return host
+  return location + " · " + host
 }
 
 function escapedMarkup(value) {

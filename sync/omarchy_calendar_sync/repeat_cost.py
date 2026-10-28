@@ -49,16 +49,40 @@ def series_cost(vevent, last_day):
 
 
 def window_dates(vevent, window_first, window_last):
-    """An estimate of the dates `vevent` lands on between the two days."""
+    """An estimate of the dates `vevent` lands on between the two days.
+
+    Extra dates and a moved occurrence count only when they fall between
+    the two days; a rule counts the periods it walks there.
+    """
     first_day = start_day(vevent)
+    dates = _extra_dates_between(vevent.get("RDATE"), window_first, window_last)
     rules = _listed(vevent.get("RRULE"))
-    dates = _extra_dates(vevent.get("RDATE"))
     if not rules:
-        return dates + 1
+        return dates + _own_date_between(vevent, first_day, window_first, window_last)
     from_day = max(first_day, window_first)
     for rule in rules:
         dates += _rule_dates(rule, from_day, window_last)
     return dates
+
+
+def _own_date_between(vevent, first_day, window_first, window_last):
+    days = [first_day]
+    moved_from = vevent.get("RECURRENCE-ID")
+    if moved_from is not None:
+        days.append(day_of(moved_from.dt))
+    for day in days:
+        if window_first <= day <= window_last:
+            return 1
+    return 0
+
+
+def _extra_dates_between(rdates, window_first, window_last):
+    count = 0
+    for rdate in _listed(rdates):
+        for value in getattr(rdate, "dts", [rdate]):
+            if window_first <= day_of(value.dt) <= window_last:
+                count += 1
+    return count
 
 
 def start_day(vevent):

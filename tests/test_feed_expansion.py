@@ -123,7 +123,7 @@ class TestWhatReachesTheExpansion(unittest.TestCase):
 
     def test_a_calendar_whose_events_would_land_too_many_dates_in_the_window_is_refused_before_expanding(self):
         calendar = calendar_of(vevent("one@example.invalid", {"FREQ": "DAILY"}), vevent("two@example.invalid", {"FREQ": "DAILY"}))
-        with mock.patch.object(feed_expansion, "EVENTS_PER_CALENDAR", 21):
+        with mock.patch.object(feed_expansion, "DATES_BEFORE_EXPANSION", 21):
             with self.assertRaises(TooManyEvents):
                 feed_expansion.affordable_calendar(icalendar, calendar, FIRST_DAY, LAST_DAY)
 
@@ -171,6 +171,32 @@ class TestPastEvents(unittest.TestCase):
         with mock.patch.object(feed_expansion, "EVENTS_PER_CALENDAR", 3):
             trimmed, left_out = feed_expansion.affordable_calendar(icalendar, calendar, FIRST_DAY, LAST_DAY)
         self.assertEqual((uids(trimmed), left_out), (["now@example.invalid"], 0))
+
+
+class TestLongLivedCalendars(unittest.TestCase):
+    def test_moved_occurrences_from_years_ago_do_not_count_towards_the_window(self):
+        components = [vevent("standup@example.invalid", {"FREQ": "DAILY"})]
+        for number in range(5):
+            moved = single("standup@example.invalid", date(2018, 1, number + 2))
+            moved.add("RECURRENCE-ID", date(2018, 1, number + 1))
+            components.append(moved)
+        with mock.patch.object(feed_expansion, "DATES_BEFORE_EXPANSION", 12):
+            trimmed, _ = feed_expansion.affordable_calendar(icalendar, calendar_of(*components), FIRST_DAY, LAST_DAY)
+        self.assertEqual(len(uids(trimmed)), 6)
+
+    def test_extra_dates_from_years_ago_do_not_count_towards_the_window(self):
+        event = single("listed@example.invalid", date(2018, 1, 1))
+        event.add("RDATE", [date(2018, 2, 1), date(2018, 3, 1), date(2018, 4, 1)])
+        with mock.patch.object(feed_expansion, "DATES_BEFORE_EXPANSION", 1):
+            feed_expansion.affordable_calendar(icalendar, calendar_of(event), FIRST_DAY, LAST_DAY)
+
+    def test_more_yearly_birthdays_than_the_display_limit_still_reach_the_expansion(self):
+        birthdays = []
+        for number in range(30):
+            birthdays.append(vevent("birthday-%d@example.invalid" % number, {"FREQ": "YEARLY"}))
+        with mock.patch.object(feed_expansion, "EVENTS_PER_CALENDAR", 20):
+            trimmed, left_out = feed_expansion.affordable_calendar(icalendar, calendar_of(*birthdays), FIRST_DAY, LAST_DAY)
+        self.assertEqual((len(uids(trimmed)), left_out), (30, 0))
 
 
 if __name__ == "__main__":
