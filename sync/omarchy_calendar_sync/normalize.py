@@ -54,7 +54,7 @@ def _meeting_url_in_text(*texts):
     return ""
 
 
-def _meeting_url(gevent):
+def meeting_url(gevent):
     """The video link for an event, preferring the one Google resolves itself."""
     direct = _https_only(gevent.get("hangoutLink"))
     if direct:
@@ -159,7 +159,7 @@ def normalize_event(gevent, calendar, tz, window):
     start_iso = start_dt.isoformat()
     end_iso = end_dt.isoformat()
 
-    meeting_url = _meeting_url(gevent)
+    meeting_link = meeting_url(gevent)
     event_url = _https_only(gevent.get("htmlLink"))
     event_type = str(gevent.get("eventType") or "")
     response_status = _response_status(gevent)
@@ -178,7 +178,7 @@ def normalize_event(gevent, calendar, tz, window):
             "allDay": all_day,
             "title": title,
             "location": location,
-            "meetingUrl": meeting_url,
+            "meetingUrl": meeting_link,
             "eventUrl": event_url,
             "eventType": event_type,
             "responseStatus": response_status,

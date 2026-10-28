@@ -413,3 +413,45 @@ class TestOneBadCalendar(unittest.TestCase):
         self.assertEqual(code, cli.EXIT_SYNC_FAILED)
         written.assert_not_called()
         self.assertIn("more than 10", log)
+
+
+class TestCopiesThatDiffer(unittest.TestCase):
+    START = "2026-08-10T19:15:00-05:00"
+
+    def rows_for(self, calendars, copies):
+        code, written, _ = sync_capturing(FakeGws(calendars=calendars, events=copies))
+        self.assertEqual(code, cli.EXIT_OK)
+        return written_rows(written)
+
+    def with_link(self, summary, link):
+        event = gevent("shared@google.com", self.START, summary)
+        event["hangoutLink"] = link
+        return event
+
+    def test_a_copy_from_someone_elses_calendar_that_sorts_first_cannot_replace_the_event(self):
+        calendars = [
+            {"id": "aaa@example.com", "name": "Aaa made-up", "color": "#f83a22"},
+            {"id": "team@example.com", "name": "Team", "color": "#7bd148"},
+        ]
+        copies = {
+            "aaa@example.com": [self.with_link("Made-up review", "https://evil.example.invalid/join")],
+            "team@example.com": [self.with_link("Made-up review", "https://meet.google.com/abc-defg-hij")],
+        }
+        links = set()
+        for row in self.rows_for(calendars, copies):
+            links.add(row["meetingUrl"])
+        self.assertEqual(links, {"https://evil.example.invalid/join", "https://meet.google.com/abc-defg-hij"})
+
+    def test_a_calendar_shared_with_write_access_still_cannot_replace_the_event(self):
+        calendars = [
+            {"id": "aaa@example.com", "name": "Aaa made-up", "color": "#f83a22", "writable": True},
+            {"id": "team@example.com", "name": "Team", "color": "#7bd148"},
+        ]
+        copies = {
+            "aaa@example.com": [gevent("shared@google.com", self.START, "Something else")],
+            "team@example.com": [gevent("shared@google.com", self.START, "Made-up review")],
+        }
+        titles = set()
+        for row in self.rows_for(calendars, copies):
+            titles.add(row["title"])
+        self.assertEqual(titles, {"Something else", "Made-up review"})

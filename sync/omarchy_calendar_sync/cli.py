@@ -62,22 +62,48 @@ def occurrence_key(gevent):
     return (uid, start.get("dateTime") or start.get("date"))
 
 
-def _drop_duplicates(gevents, seen):
-    """Filter events already seen in an earlier calendar. Mutates `seen`.
+def _drop_duplicates(gevents, seen, calendar):
+    """Filter copies of events seen in an earlier calendar. Mutates `seen`.
 
-    First occurrence wins. The primary calendar goes first and the rest
-    follow by name, so which copy survives is stable across runs rather than
-    depending on Google's order.
+    The primary calendar goes first and the rest follow by name. A later
+    copy is left out when it says the same as the first one, or when the
+    first came from the primary calendar. A copy that differs from one in
+    any other calendar is kept, so no calendar can hide or replace an event
+    that another calendar shows. Write access proves nothing here: anyone
+    can share a calendar and grant it.
     """
     fresh = []
     for gevent in gevents:
         key = occurrence_key(gevent)
-        if key is not None:
-            if key in seen:
-                continue
-            seen.add(key)
-        fresh.append(gevent)
+        if key is None:
+            fresh.append(gevent)
+            continue
+        first = seen.get(key)
+        if first is None:
+            seen[key] = (_content(gevent), _is_own(calendar))
+            fresh.append(gevent)
+            continue
+        if not _covered_by(first, gevent):
+            fresh.append(gevent)
     return fresh
+
+
+def _covered_by(first, gevent):
+    first_content, first_is_own = first
+    return first_is_own or first_content == _content(gevent)
+
+
+def _content(gevent):
+    end = gevent.get("end") or {}
+    return (
+        str(gevent.get("summary") or ""),
+        end.get("dateTime") or end.get("date"),
+        normalize.meeting_url(gevent),
+    )
+
+
+def _is_own(calendar):
+    return calendar.get("primary") is True
 
 
 def _give_usable_colors(calendars):
@@ -119,7 +145,7 @@ def run(client, cfg, now, out_path, local_tz):
         window = config_module.local_days_in_window(cfg, now, local_tz)
 
         rows = []
-        seen = set()
+        seen = {}
         fetched = []
         skipped = 0
         for calendar in calendars:
@@ -127,7 +153,7 @@ def run(client, cfg, now, out_path, local_tz):
             if raw is None:
                 skipped += 1
                 continue
-            fresh = _drop_duplicates(raw, seen)
+            fresh = _drop_duplicates(raw, seen, calendar)
             fetched.extend(fresh)
             rows.extend(_sound_rows(normalize.normalize_all(fresh, calendar, local_tz, window), calendar))
 
