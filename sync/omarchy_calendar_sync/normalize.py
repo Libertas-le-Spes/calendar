@@ -9,7 +9,7 @@ import re
 from datetime import date, datetime, time, timedelta
 
 from .contract import FIELD_LENGTHS, is_https_url
-from .plaintext import description_text
+from .plaintext import clipped, description_text
 
 NO_TITLE = "(no title)"
 
@@ -190,10 +190,7 @@ def normalize_event(gevent, calendar, tz, window):
 
 
 def _clipped(text, field):
-    limit = FIELD_LENGTHS[field]
-    if len(text) <= limit:
-        return text
-    return text[: limit - 1].rstrip() + "…"
+    return clipped(text, FIELD_LENGTHS[field])
 
 
 def _parse_endpoint(node, tz):

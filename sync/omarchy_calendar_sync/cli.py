@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import config as config_module
-from . import contract, normalize, suggestions
+from . import colors, contract, normalize, suggestions
 from .eds import Eds
 from .errors import CalendarUnreadable, SyncError
 from .gws import Gws
@@ -94,12 +94,27 @@ def _covered_by(first, gevent):
 
 
 def _content(gevent):
-    end = gevent.get("end") or {}
     return (
-        str(gevent.get("summary") or ""),
-        end.get("dateTime") or end.get("date"),
+        _text_of(gevent, "summary"),
+        _end_of(gevent),
         normalize.meeting_url(gevent),
     )
+
+
+def _text_of(gevent, key):
+    value = gevent.get(key)
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _end_of(gevent):
+    end = gevent.get("end")
+    if not isinstance(end, dict):
+        return None
+    if "dateTime" in end:
+        return end["dateTime"]
+    return end.get("date")
 
 
 def _is_own(calendar):
@@ -108,7 +123,7 @@ def _is_own(calendar):
 
 def _give_usable_colors(calendars):
     for position, calendar in enumerate(calendars):
-        calendar["color"] = contract.usable_color(calendar.get("color"), position)
+        calendar["color"] = colors.usable_color(calendar.get("color"), position)
 
 
 def _sound_rows(rows, calendar):
@@ -186,9 +201,7 @@ def run(client, cfg, now, out_path, local_tz):
         guests = suggestions.guest_suggestions(fetched, [c["id"] for c in calendars])
     doc = contract.build_document(rows, now.isoformat(), source, writable, guests)
 
-    text = contract.serialize(doc)
-    problems = contract.validate(doc)
-    problems.extend(_size_problems(text))
+    text, problems = contract.checked(doc)
     if problems:
         for problem in problems:
             print(f"refusing to write invalid document: {problem}", file=sys.stderr)
@@ -197,13 +210,6 @@ def run(client, cfg, now, out_path, local_tz):
     write_atomic(out_path, text)
     print(f"wrote {len(rows)} rows from {len(calendars)} calendars to {out_path}")
     return EXIT_OK
-
-
-def _size_problems(text):
-    problem = contract.size_problem(text)
-    if problem:
-        return [problem]
-    return []
 
 
 def build_client(cfg, local_tz=None):

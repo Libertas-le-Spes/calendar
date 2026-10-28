@@ -18,29 +18,18 @@ on a machine without python-icalendar and python-recurring-ical-events.
 """
 
 import base64
-import hashlib
 import re
-import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from datetime import date, datetime, timedelta
 
-from .contract import CALENDAR_COLORS
-from .errors import CalendarUnreadable, SyncError, TooManyEvents
-from . import keyring, web
+from . import keyring
+from .errors import CalendarUnreadable, FeedProblem, SyncError, TooManyEvents
+from .feed_download import download
 from .feed_expansion import affordable_calendar, occurrences_in_window
-from .limits import FEED_BYTES
+from .feeds import feed_url, parse_feeds, redact, scrubbed, unsafe_reason
 from .localzone import resolve_local_timezone
 from .resources import build_event
 
-FETCH_TIMEOUT = 30
-FEED_SECONDS = 60
-CHUNK_BYTES = 64 * 1024
-# A feed carries no colour of its own, so each one takes the next of
-# Google's calendar colours, keeping two feeds apart on the grid.
-FEED_COLORS = CALENDAR_COLORS
-USER_AGENT = "omarchy-calendar-sync"
 MINIMUM_ICALENDAR = (7, 2, 2)
 
 
@@ -63,92 +52,6 @@ def _load_libs():
             "%s; install python-icalendar and python-recurring-ical-events"
             % error
         ) from error
-
-
-def feed_url(value):
-    """The fetchable URL for a configured feed. webcal:// is https://."""
-    text = str(value or "").strip()
-    if text.startswith("webcal://"):
-        text = "https://" + text[len("webcal://"):]
-    return text
-
-
-def redact(url):
-    """A URL safe to log: its scheme and host only.
-
-    The path of a private feed is the credential, and an address may carry
-    a user name and password before its host.
-    """
-    try:
-        parts = urllib.parse.urlsplit(feed_url(url))
-        host = parts.hostname
-    except ValueError:
-        return "(unreadable address)"
-    if not host:
-        return "(no host)"
-    return "%s://%s/..." % (parts.scheme, host)
-
-
-def scrubbed(text, url):
-    """`text` with every secret part of `url` taken out, for printing."""
-    address = feed_url(url)
-    parts = urllib.parse.urlsplit(address)
-    for secret in (address, parts.path, parts.query):
-        if len(secret) > 1:
-            text = text.replace(secret, "…")
-    return text
-
-
-
-def feed_id(url):
-    """A stable calendar id that does not leak the secret URL into the file."""
-    return "ics-" + hashlib.sha256(feed_url(url).encode()).hexdigest()[:12]
-
-
-SECRET_HINT = (
-    "use \"Secret address in iCal format\" under Settings > the calendar > "
-    "Integrate calendar; it looks like .../ical/<id>/private-<code>/basic.ics"
-)
-
-
-def url_problem(value):
-    """Why a URL is not a usable feed, or blank when it looks fine.
-
-    Google shows the public address and the embed link right beside the
-    secret one, and both are easy to copy by mistake.
-    """
-    url = feed_url(value)
-    unsafe = unsafe_reason(url)
-    if unsafe:
-        return unsafe
-    if "calendar.google.com" in url:
-        if "/embed" in url:
-            return "that is the embed link, a web page rather than a feed; " + SECRET_HINT
-        if "/public/" in url:
-            return ("that is the public address, which only works for a "
-                    "calendar shared publicly; " + SECRET_HINT)
-    return ""
-
-
-_CONTROL_OR_SPACE = re.compile(r"[\x00-\x20\x7f\\]")
-
-
-def unsafe_reason(url):
-    """Why the sync would refuse to fetch `url`, or blank when it is safe to."""
-    if not url.startswith("https://"):
-        return "expected an https:// or webcal:// address"
-    if _CONTROL_OR_SPACE.search(url):
-        return "the address holds spaces, control characters or a backslash"
-    try:
-        parts = urllib.parse.urlsplit(url)
-        host = parts.hostname
-    except ValueError:
-        return "the address cannot be read"
-    if not host:
-        return "the address has no host"
-    if parts.username is not None or parts.password is not None:
-        return "the address carries a user name or password, which would end up in logs"
-    return ""
 
 
 _GOOGLE_HOSTS = ("calendar.google.com", "www.google.com")
@@ -179,117 +82,6 @@ def google_event_url(uid, calendar_id):
     event_id = uid[: -len(_GOOGLE_UID_SUFFIX)]
     eid = base64.urlsafe_b64encode(("%s %s" % (event_id, calendar_id)).encode())
     return "https://calendar.google.com/calendar/event?eid=" + eid.decode().rstrip("=")
-
-
-class AddressFeed:
-    """A feed whose address is written in the config."""
-
-    def __init__(self, url, name, color):
-        self.url = url
-        self.name = name
-        self.color = color
-
-    def ident(self):
-        return feed_id(self.url)
-
-    def label(self):
-        return redact(self.url)
-
-    def address(self):
-        return self.url
-
-
-class KeyringFeed:
-    """A feed whose address sync/setup stored in the keyring."""
-
-    def __init__(self, secret_id, name, color, lookup):
-        self.secret_id = secret_id
-        self.name = name
-        self.color = color
-        self._lookup = lookup
-
-    def ident(self):
-        return self.secret_id
-
-    def label(self):
-        return "keyring feed " + self.secret_id
-
-    def address(self):
-        try:
-            url = feed_url(self._lookup(self.secret_id))
-        except keyring.KeyringMissing as missing:
-            raise FeedProblem(str(missing)) from None
-        unsafe = unsafe_reason(url)
-        if unsafe:
-            raise FeedProblem(unsafe)
-        return url
-
-
-def parse_feeds(raw, lookup=keyring.lookup):
-    """Read the `ics` config value into feeds.
-
-    Accepts a single URL string, a list of URL strings, or a list of objects
-    with either `url` or `secret` (a keyring id) and optional `name` and
-    `color`. Returns the feeds and, apart, the addresses refused as unsafe
-    to fetch.
-    """
-    if isinstance(raw, (str, dict)):
-        raw = [raw]
-    feeds = []
-    refused = []
-    for entry in raw or []:
-        if isinstance(entry, str):
-            entry = {"url": entry}
-        if not isinstance(entry, dict):
-            continue
-        name = str(entry.get("name") or "").strip()
-        color = str(entry.get("color") or "").strip()
-        secret_id = str(entry.get("secret") or "").strip()
-        if secret_id:
-            feeds.append(KeyringFeed(secret_id, name, color, lookup))
-            continue
-        url = feed_url(entry.get("url"))
-        if not url:
-            continue
-        if unsafe_reason(url):
-            refused.append(url)
-            continue
-        feeds.append(AddressFeed(url, name, color))
-    return feeds, refused
-
-
-class FeedProblem(Exception):
-    """A feed could not be read. The message is safe to log."""
-
-
-class FeedTooLarge(FeedProblem):
-    """A feed is larger than any real calendar the sync reads."""
-
-
-def _http_get(url):
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    deadline = time.monotonic() + FEED_SECONDS
-    try:
-        with web.open_public(request, FETCH_TIMEOUT) as response:
-            return read_capped(response, FEED_BYTES, deadline)
-    except urllib.error.HTTPError as error:
-        raise FeedProblem("the server answered HTTP %d" % error.code) from None
-
-
-def read_capped(stream, limit, deadline, clock=time.monotonic):
-    """The whole body, refused once it passes `limit` bytes or the deadline."""
-    chunks = []
-    size = 0
-    while True:
-        if clock() > deadline:
-            raise FeedProblem("the feed took longer than %d seconds to arrive" % FEED_SECONDS)
-        chunk = stream.read(CHUNK_BYTES)
-        if not chunk:
-            return b"".join(chunks)
-        size += len(chunk)
-        if size > limit:
-            raise FeedTooLarge("the feed is larger than %d bytes" % limit)
-        chunks.append(chunk)
 
 
 def to_node(value, local_tz):
@@ -393,6 +185,13 @@ def occurrence_to_event(component, local_tz, identity="", calendar_id=""):
     )
 
 
+def _first_given(*choices):
+    for choice in choices:
+        if choice:
+            return choice
+    return ""
+
+
 def _skip(label, reason, url):
     failure = scrubbed("%s: %s" % (label, reason), url)
     print("skipping " + failure)
@@ -421,7 +220,7 @@ class Ics:
     def __init__(self, feeds, identity="", fetch=None, local_tz=None, lookup=keyring.lookup):
         self._feeds, self._refused = parse_feeds(feeds, lookup)
         self._identity = identity
-        self._fetch = fetch or _http_get
+        self._fetch = fetch or download
         self._local_tz = local_tz if local_tz is not None else resolve_local_timezone()
         # Feed id -> (parsed calendar, Google calendar id or blank).
         self._parsed = {}
@@ -472,12 +271,8 @@ class Ics:
             found.append(
                 {
                     "id": ident,
-                    "name": feed.name
-                    or _text(calendar, "X-WR-CALNAME")
-                    or redact(url),
-                    "color": feed.color
-                    or _text(calendar, "X-APPLE-CALENDAR-COLOR")
-                    or FEED_COLORS[position % len(FEED_COLORS)],
+                    "name": _first_given(feed.name, _text(calendar, "X-WR-CALNAME"), redact(url)),
+                    "color": _first_given(feed.color, _text(calendar, "X-APPLE-CALENDAR-COLOR")),
                 }
             )
 

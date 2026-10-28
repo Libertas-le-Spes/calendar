@@ -198,9 +198,7 @@ class Eds:
         except Exception as error:
             raise EdsError("cannot read %s: %s" % (calendar_id, error))
         if len(collected) > EVENTS_PER_CALENDAR:
-            raise TooManyEvents(
-                "more than %d events in the sync window" % EVENTS_PER_CALENDAR
-            )
+            raise TooManyEvents()
 
         utc_zone = ical.Timezone.get_utc_timezone()
         return [

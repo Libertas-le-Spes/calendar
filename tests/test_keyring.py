@@ -15,7 +15,7 @@ class TestLookup(unittest.TestCase):
         keyring.lookup("ics-0123456789ab", run=run)
         run.assert_called_once_with(
             ["secret-tool", "lookup", "application", "omarchy-calendar", "feed", "ics-0123456789ab"],
-            capture_output=True, text=True, timeout=keyring.LOOKUP_SECONDS,
+            capture_output=True, text=True, timeout=keyring.KEYRING_SECONDS,
         )
 
     def test_the_stored_address_is_returned_without_its_newline(self):
@@ -38,7 +38,7 @@ class TestLookup(unittest.TestCase):
             keyring.lookup("ics-0123456789ab", run=run)
 
     def test_a_keyring_that_does_not_answer_in_time_is_missing(self):
-        run = mock.Mock(side_effect=subprocess.TimeoutExpired(["secret-tool"], keyring.LOOKUP_SECONDS))
+        run = mock.Mock(side_effect=subprocess.TimeoutExpired(["secret-tool"], keyring.KEYRING_SECONDS))
         with self.assertRaises(keyring.KeyringMissing):
             keyring.lookup("ics-0123456789ab", run=run)
 

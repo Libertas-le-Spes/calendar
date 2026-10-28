@@ -86,8 +86,8 @@ def perform(raw, cfg, client, doc_path, tz, window, start_sync=start_background_
 
     try:
         spliced = writes.splice(doc, calendar, event_id, resource, tz, window)
-        text = contract.serialize(spliced)
-        if not contract.validate(spliced) and not contract.size_problem(text):
+        text, problems = contract.checked(spliced)
+        if not problems:
             cli.write_atomic(Path(doc_path), text)
     except (KeyError, TypeError, ValueError, OSError):
         # Google has the change. The background sync below writes the file.

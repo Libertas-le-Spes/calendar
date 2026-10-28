@@ -79,9 +79,6 @@ class TestNoShell(unittest.TestCase):
                     self.assertIsNone(pattern.search(source))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 WORKFLOWS = REPO / ".github" / "workflows"
 PINNED_ACTION = re.compile(r"^[\w.-]+/[\w.-]+@[0-9a-f]{40}$")
@@ -118,3 +115,7 @@ class TestWorkflows(unittest.TestCase):
             for image in re.findall(r"image:\s*(\S+)", text):
                 with self.subTest(workflow=name, image=image):
                     self.assertRegex(image, r"@sha256:[0-9a-f]{64}$")
+
+
+if __name__ == "__main__":
+    unittest.main()

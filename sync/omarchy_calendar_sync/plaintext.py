@@ -74,6 +74,13 @@ class _TextExtractor(HTMLParser):
             self.parts.append("\n")
 
 
+def clipped(text, limit):
+    """`text` cut to at most `limit` characters, ending in an ellipsis when cut."""
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
 def _first_part(text):
     return text[:RAW_DESCRIPTION_LIMIT]
 
@@ -91,6 +98,4 @@ def description_text(raw, limit=DESCRIPTION_LIMIT):
 
     lines = [_HORIZONTAL_SPACE.sub(" ", line).strip() for line in text.split("\n")]
     text = _EXTRA_BLANK_LINES.sub("\n\n", "\n".join(lines)).strip()
-    if len(text) > limit:
-        text = text[: limit - 1].rstrip() + "…"
-    return text
+    return clipped(text, limit)

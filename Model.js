@@ -1104,8 +1104,8 @@ function notificationArg(value) {
 }
 
 function guestLabel(suggestion) {
-  var email = text(suggestion && suggestion.email)
-  var name = text(suggestion && suggestion.name).trim()
+  var email = text(suggestion.email)
+  var name = text(suggestion.name).trim()
   if (!name) return email
   return email + "  (" + name + ")"
 }

@@ -12,6 +12,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import NamedTuple
 
+from .feeds import entry_text, feed_entries
+
 CONFIG_PATH = Path.home() / ".config" / "omarchy" / "calendar-sync.json"
 OTHERS_WRITE = stat.S_IWGRP | stat.S_IWOTH
 OTHERS_READ = stat.S_IRGRP | stat.S_IROTH
@@ -99,22 +101,9 @@ def permission_problem(file_status, folder_status, holds_secrets, user_id):
 
 
 def holds_plain_feed_addresses(raw):
-    feeds = raw.get("ics")
-    if isinstance(feeds, (str, dict)):
-        feeds = [feeds]
-    if not isinstance(feeds, list):
-        return False
-    for feed in feeds:
-        if _is_plain_address(feed):
+    for entry in feed_entries(raw.get("ics")):
+        if entry_text(entry, "url"):
             return True
-    return False
-
-
-def _is_plain_address(feed):
-    if isinstance(feed, str):
-        return bool(feed.strip())
-    if isinstance(feed, dict):
-        return bool(str(feed.get("url") or "").strip())
     return False
 
 

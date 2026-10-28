@@ -9,7 +9,7 @@ from unittest import mock
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from omarchy_calendar_sync import cli, config, ics, keyring, normalize
+from omarchy_calendar_sync import cli, config, errors, feed_download, feeds, ics, keyring, normalize
 from omarchy_calendar_sync.errors import CalendarUnreadable
 from omarchy_calendar_sync.config import DayWindow
 
@@ -144,24 +144,24 @@ def sync_rows(c):
 
 class TestFeeds(unittest.TestCase):
     def test_config_shapes(self):
-        feeds, _refused = ics.parse_feeds(URL)
-        self.assertEqual(feeds[0].url, URL)
-        feeds, _refused = ics.parse_feeds([{"url": "webcal://x.example/a.ics", "name": "N"}])
-        self.assertEqual((feeds[0].url, feeds[0].name, feeds[0].color), ("https://x.example/a.ics", "N", ""))
-        self.assertEqual(ics.parse_feeds([None, "", {"name": "no url"}]), ([], []))
+        found, _refused = feeds.parse_feeds(URL)
+        self.assertEqual(found[0].url, URL)
+        found, _refused = feeds.parse_feeds([{"url": "webcal://x.example/a.ics", "name": "N"}])
+        self.assertEqual((found[0].url, found[0].name, found[0].color), ("https://x.example/a.ics", "N", ""))
+        self.assertEqual(feeds.parse_feeds([None, "", {"name": "no url"}]), ([], []))
 
     def test_the_secret_url_never_reaches_ids_or_names(self):
-        self.assertNotIn("private", ics.feed_id(URL))
-        self.assertEqual(ics.redact(URL), "https://calendar.google.com/...")
+        self.assertNotIn("private", feeds.feed_id(URL))
+        self.assertEqual(feeds.redact(URL), "https://calendar.google.com/...")
 
     def test_public_and_embed_links_are_named_as_the_wrong_address(self):
-        self.assertEqual(ics.url_problem(URL), "")
-        self.assertEqual(ics.url_problem("webcal://x.example/a.ics"), "")
+        self.assertEqual(feeds.url_problem(URL), "")
+        self.assertEqual(feeds.url_problem("webcal://x.example/a.ics"), "")
         public = "https://calendar.google.com/calendar/ical/me%40example.com/public/basic.ics"
         embed = "https://calendar.google.com/calendar/embed?src=abc%40group.calendar.google.com"
-        self.assertIn("public address", ics.url_problem(public))
-        self.assertIn("embed link", ics.url_problem(embed))
-        self.assertIn("https://", ics.url_problem("not a url"))
+        self.assertIn("public address", feeds.url_problem(public))
+        self.assertIn("embed link", feeds.url_problem(embed))
+        self.assertIn("https://", feeds.url_problem("not a url"))
 
     def test_no_feeds_is_an_error(self):
         with self.assertRaises(ics.IcsError):
@@ -177,12 +177,9 @@ class TestExpansion(unittest.TestCase):
 
     def test_calendar_name_comes_from_the_feed(self):
         self.assertEqual(self.calendars[0]["name"], "me@example.com")
-        self.assertEqual(self.calendars[0]["color"], ics.FEED_COLORS[0])
 
-    def test_feeds_without_a_colour_get_distinct_ones(self):
-        other = "https://calendar.google.com/calendar/ical/b%40example.com/private-x/basic.ics"
-        calendars = client(feeds=[URL, other]).calendars()
-        self.assertEqual([c["color"] for c in calendars], list(ics.FEED_COLORS[:2]))
+    def test_a_feed_without_a_colour_leaves_the_choice_to_the_sync(self):
+        self.assertEqual(self.calendars[0]["color"], "")
 
     def test_recurrence_is_expanded_and_cancelled_instance_dropped(self):
         days = [row["dateKey"] for row in self.by_title["Standup"]]
@@ -337,35 +334,35 @@ def always(reading):
 
 class TestFeedSize(unittest.TestCase):
     def test_a_feed_at_the_limit_is_returned_whole(self):
-        body = ics.read_capped(FakeStream([b"xxxx", b"xxxxxx"]), 10, 100, clock=always(0))
+        body = feed_download.read_capped(FakeStream([b"xxxx", b"xxxxxx"]), 10, 100, clock=always(0))
         self.assertEqual(body, b"x" * 10)
 
     def test_a_feed_over_the_limit_is_refused(self):
-        with self.assertRaises(ics.FeedTooLarge):
-            ics.read_capped(FakeStream([b"xxxxxx", b"xxxxx"]), 10, 100, clock=always(0))
+        with self.assertRaises(errors.FeedTooLarge):
+            feed_download.read_capped(FakeStream([b"xxxxxx", b"xxxxx"]), 10, 100, clock=always(0))
 
     def test_reading_stops_at_the_chunk_that_passes_the_limit(self):
         stream = FakeStream([b"xxxxxx", b"xxxxx", b"never read"])
-        with self.assertRaises(ics.FeedTooLarge):
-            ics.read_capped(stream, 10, 100, clock=always(0))
+        with self.assertRaises(errors.FeedTooLarge):
+            feed_download.read_capped(stream, 10, 100, clock=always(0))
         self.assertEqual(stream.reads, 2)
 
     def test_each_read_asks_for_one_chunk(self):
         stream = mock.Mock()
         stream.read.side_effect = [b"x", b""]
-        ics.read_capped(stream, 10, 100, clock=always(0))
-        self.assertEqual(stream.read.call_args_list, [mock.call(ics.CHUNK_BYTES), mock.call(ics.CHUNK_BYTES)])
+        feed_download.read_capped(stream, 10, 100, clock=always(0))
+        self.assertEqual(stream.read.call_args_list, [mock.call(feed_download.CHUNK_BYTES), mock.call(feed_download.CHUNK_BYTES)])
 
 
 class TestFeedDeadline(unittest.TestCase):
     def test_a_feed_that_arrives_before_the_deadline_is_read(self):
-        body = ics.read_capped(FakeStream([b"a", b"b"]), 10, 100, clock=FakeClock(98, 99, 100))
+        body = feed_download.read_capped(FakeStream([b"a", b"b"]), 10, 100, clock=FakeClock(98, 99, 100))
         self.assertEqual(body, b"ab")
 
     def test_a_feed_still_arriving_after_the_deadline_is_refused(self):
         stream = FakeStream([b"a", b"b", b"c"])
-        with self.assertRaises(ics.FeedProblem):
-            ics.read_capped(stream, 10, 100, clock=FakeClock(99, 101))
+        with self.assertRaises(errors.FeedProblem):
+            feed_download.read_capped(stream, 10, 100, clock=FakeClock(99, 101))
         self.assertEqual(stream.reads, 1)
 
     def test_an_oversized_feed_is_skipped_like_any_broken_feed(self):
@@ -374,13 +371,13 @@ class TestFeedDeadline(unittest.TestCase):
 
         def fetch(url):
             if url == big:
-                raise ics.FeedTooLarge("too large")
+                raise errors.FeedTooLarge("too large")
             return FEED
 
         with contextlib.redirect_stdout(io.StringIO()):
             calendars = client(fetch=fetch, feeds=[big, good]).calendars()
         self.assertEqual(len(calendars), 1)
-        self.assertEqual(calendars[0]["id"], ics.feed_id(good))
+        self.assertEqual(calendars[0]["id"], feeds.feed_id(good))
 
 
 class TestExpansionFailure(unittest.TestCase):
@@ -399,28 +396,28 @@ SECRET = "https://calendar.example.invalid/ical/made-up/private-SECRETMADEUP/bas
 
 class TestFeedAddressRules(unittest.TestCase):
     def test_an_https_address_is_safe(self):
-        self.assertEqual(ics.unsafe_reason("https://feeds.example.invalid/a.ics"), "")
+        self.assertEqual(feeds.unsafe_reason("https://feeds.example.invalid/a.ics"), "")
 
     def test_a_webcal_address_is_read_as_https(self):
-        self.assertEqual(ics.unsafe_reason(ics.feed_url("webcal://feeds.example.invalid/a.ics")), "")
+        self.assertEqual(feeds.unsafe_reason(feeds.feed_url("webcal://feeds.example.invalid/a.ics")), "")
 
     def test_a_plain_http_address_is_refused(self):
-        self.assertIn("https://", ics.unsafe_reason("http://feeds.example.invalid/a.ics"))
+        self.assertIn("https://", feeds.unsafe_reason("http://feeds.example.invalid/a.ics"))
 
     def test_an_address_with_a_user_name_and_password_is_refused(self):
-        self.assertIn("password", ics.unsafe_reason("https://madeup:PASSWORD@feeds.example.invalid/a.ics"))
+        self.assertIn("password", feeds.unsafe_reason("https://madeup:PASSWORD@feeds.example.invalid/a.ics"))
 
     def test_an_address_with_a_space_a_control_character_or_a_backslash_is_refused(self):
         for address in ("https://feeds.example.invalid/a b.ics", "https://feeds.example.invalid/a\x07.ics", "https://evil.example\\@feeds.example.invalid/"):
             with self.subTest(address=address):
-                self.assertNotEqual(ics.unsafe_reason(address), "")
+                self.assertNotEqual(feeds.unsafe_reason(address), "")
 
     def test_an_address_with_no_host_is_refused(self):
-        self.assertIn("host", ics.unsafe_reason("https:///a.ics"))
+        self.assertIn("host", feeds.unsafe_reason("https:///a.ics"))
 
     def test_an_unsafe_feed_is_set_apart_from_the_feeds(self):
-        feeds, refused = ics.parse_feeds(["http://feeds.example.invalid/a.ics", "https://feeds.example.invalid/b.ics"])
-        self.assertEqual([feed.url for feed in feeds], ["https://feeds.example.invalid/b.ics"])
+        found, refused = feeds.parse_feeds(["http://feeds.example.invalid/a.ics", "https://feeds.example.invalid/b.ics"])
+        self.assertEqual([feed.url for feed in found], ["https://feeds.example.invalid/b.ics"])
         self.assertEqual(refused, ["http://feeds.example.invalid/a.ics"])
 
     def test_an_unsafe_feed_is_never_fetched_and_its_host_alone_is_logged(self):
@@ -440,13 +437,13 @@ class TestFeedAddressRules(unittest.TestCase):
 
 class TestSecretsStayOutOfTheLog(unittest.TestCase):
     def test_redact_keeps_only_the_scheme_and_host(self):
-        self.assertEqual(ics.redact(SECRET), "https://calendar.example.invalid/...")
+        self.assertEqual(feeds.redact(SECRET), "https://calendar.example.invalid/...")
 
     def test_redact_drops_a_user_name_and_password(self):
-        self.assertEqual(ics.redact("https://madeup:PASSWORD@dav.example.invalid/x.ics"), "https://dav.example.invalid/...")
+        self.assertEqual(feeds.redact("https://madeup:PASSWORD@dav.example.invalid/x.ics"), "https://dav.example.invalid/...")
 
     def test_scrubbed_takes_out_the_path_and_query(self):
-        text = ics.scrubbed("failed: /ical/made-up/private-SECRETMADEUP/basic.ics and token=QUERYMADEUP", SECRET)
+        text = feeds.scrubbed("failed: /ical/made-up/private-SECRETMADEUP/basic.ics and token=QUERYMADEUP", SECRET)
         self.assertNotIn("SECRETMADEUP", text)
         self.assertNotIn("QUERYMADEUP", text)
 
@@ -464,7 +461,7 @@ class TestSecretsStayOutOfTheLog(unittest.TestCase):
 
     def test_a_server_error_is_logged_as_its_status(self):
         def fetch(url):
-            raise ics.FeedProblem("the server answered HTTP 404")
+            raise errors.FeedProblem("the server answered HTTP 404")
 
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout), self.assertRaises(ics.IcsError):
@@ -475,7 +472,7 @@ class TestSecretsStayOutOfTheLog(unittest.TestCase):
 class TestScrubLayer(unittest.TestCase):
     def test_even_a_message_of_our_own_that_quotes_the_secret_path_is_scrubbed(self):
         def fetch(url):
-            raise ics.FeedProblem("the server moved /ical/made-up/private-SECRETMADEUP/basic.ics")
+            raise errors.FeedProblem("the server moved /ical/made-up/private-SECRETMADEUP/basic.ics")
 
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout), self.assertRaises(ics.IcsError) as raised:
@@ -498,9 +495,9 @@ def keyring_lookup(stored):
 
 class TestKeyringFeeds(unittest.TestCase):
     def test_a_feed_named_by_a_keyring_id_becomes_a_keyring_feed(self):
-        feeds, _refused = ics.parse_feeds([{"secret": KEYRING_ID, "name": "Made-up"}])
-        self.assertIsInstance(feeds[0], ics.KeyringFeed)
-        self.assertEqual(feeds[0].ident(), KEYRING_ID)
+        found, _refused = feeds.parse_feeds([{"secret": KEYRING_ID, "name": "Made-up"}])
+        self.assertIsInstance(found[0], feeds.KeyringFeed)
+        self.assertEqual(found[0].ident(), KEYRING_ID)
 
     def test_the_address_is_looked_up_once_and_fetched(self):
         fetched = []

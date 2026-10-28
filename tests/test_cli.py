@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from omarchy_calendar_sync import cli, config, contract, gws
+from omarchy_calendar_sync import cli, colors, config, contract, gws
 from omarchy_calendar_sync.errors import CalendarUnreadable, TooManyEvents
 
 BOGOTA = ZoneInfo("America/Bogota")
@@ -305,7 +305,7 @@ if __name__ == "__main__":
 class CrowdedCalendarGws(FakeGws):
     def events(self, calendar_id, time_min, time_max):
         if calendar_id == "crowded@example.com":
-            raise TooManyEvents("more than 2000 events in the sync window")
+            raise TooManyEvents()
         return super().events(calendar_id, time_min, time_max)
 
 
@@ -382,7 +382,7 @@ class TestOneBadCalendar(unittest.TestCase):
         calendars = [{"id": "a@example.com", "name": "Made-up feed", "color": "#a1b2c3ff"}]
         code, written, _ = sync_capturing(FakeGws(calendars=calendars))
         self.assertEqual(code, cli.EXIT_OK)
-        self.assertEqual(written_rows(written)[0]["color"], contract.CALENDAR_COLORS[0])
+        self.assertEqual(written_rows(written)[0]["color"], colors.CALENDAR_COLORS[0])
 
     def test_a_row_that_breaks_the_contract_is_dropped_and_the_rest_written(self):
         events = [made_up_event("x" * (contract.FIELD_LENGTHS["id"] + 1)), made_up_event("kept")]
@@ -455,3 +455,20 @@ class TestCopiesThatDiffer(unittest.TestCase):
         for row in self.rows_for(calendars, copies):
             titles.add(row["title"])
         self.assertEqual(titles, {"Something else", "Made-up review"})
+
+
+class TestCalendarsWithoutAColour(unittest.TestCase):
+    def test_two_calendars_without_a_colour_get_different_ones(self):
+        calendars = [
+            {"id": "a@example.com", "name": "Made-up one", "color": ""},
+            {"id": "b@example.com", "name": "Made-up two", "color": ""},
+        ]
+        copies = {
+            "a@example.com": [made_up_event("one")],
+            "b@example.com": [made_up_event("two")],
+        }
+        _, written, _ = sync_capturing(FakeGws(calendars=calendars, events=copies))
+        found = set()
+        for row in written_rows(written):
+            found.add(row["color"])
+        self.assertEqual(found, {colors.CALENDAR_COLORS[0], colors.CALENDAR_COLORS[1]})

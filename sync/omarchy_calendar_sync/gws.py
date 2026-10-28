@@ -189,9 +189,7 @@ class Gws:
             payload = self._api("GET", _events_path(calendar_id), params)
             items.extend(payload.get("items", []))
             if len(items) > EVENTS_PER_CALENDAR:
-                raise TooManyEvents(
-                    "more than %d events in the sync window" % EVENTS_PER_CALENDAR
-                )
+                raise TooManyEvents()
             page_token = payload.get("nextPageToken")
             if not page_token:
                 return items

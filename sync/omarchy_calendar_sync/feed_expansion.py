@@ -9,7 +9,7 @@ an event that lasts a thousand years keep the walk going in small steps for
 as long as it lasts.
 """
 
-from .errors import TooManyEvents
+from .errors import CalendarUnreadable, TooManyEvents
 from .limits import EVENTS_PER_CALENDAR, REPEAT_STEPS_PER_CALENDAR, REPEAT_STEPS_PER_SERIES
 from .repeat_cost import series_cost
 
@@ -19,7 +19,7 @@ def affordable_calendar(icalendar, calendar, last_day):
     costs = _series_costs(calendar, last_day)
     costly = _costly_series(costs)
     if _total_cost(costs, costly) > REPEAT_STEPS_PER_CALENDAR:
-        raise TooManyEvents("its repeating events would take too long to expand")
+        raise CalendarUnreadable("its repeating events would take too long to expand")
     trimmed = icalendar.Calendar()
     trimmed.update(calendar)
     for component in calendar.subcomponents:
@@ -32,7 +32,7 @@ def occurrences_in_window(rie, calendar, start, end):
     """Expanded components between `start` and `end`, refusing a calendar that holds too many."""
     found = rie.of(calendar).between(start, end)
     if len(found) > EVENTS_PER_CALENDAR:
-        raise TooManyEvents("more than %d events in the sync window" % EVENTS_PER_CALENDAR)
+        raise TooManyEvents()
     return found
 
 

@@ -7,11 +7,9 @@ and no extra call. The most frequent guests come first.
 from collections import Counter
 
 from .contract import MAX_GUEST_SUGGESTIONS, SUGGESTION_LENGTHS
+from .plaintext import clipped
 
-LIMIT = MAX_GUEST_SUGGESTIONS
-
-
-def guest_suggestions(gevents, exclude, limit=LIMIT):
+def guest_suggestions(gevents, exclude, limit=MAX_GUEST_SUGGESTIONS):
     """[{"email", "name"}] from the attendees of `gevents`, most frequent first.
 
     Leaves out you (the attendee marked self), rooms, and the addresses in
@@ -29,14 +27,7 @@ def guest_suggestions(gevents, exclude, limit=LIMIT):
                 continue
             counts[email] += 1
             if attendee.get("displayName") and email not in names:
-                names[email] = _clipped_name(str(attendee["displayName"]))
+                names[email] = clipped(str(attendee["displayName"]), SUGGESTION_LENGTHS["name"])
     # Ties keep a stable order, so the list does not reshuffle every sync.
     ranked = sorted(counts, key=lambda email: (-counts[email], email))
     return [{"email": email, "name": names.get(email, "")} for email in ranked[:limit]]
-
-
-def _clipped_name(name):
-    limit = SUGGESTION_LENGTHS["name"]
-    if len(name) <= limit:
-        return name
-    return name[: limit - 1].rstrip() + "…"

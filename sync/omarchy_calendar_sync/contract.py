@@ -75,14 +75,9 @@ _HTTPS_URL = re.compile(
 )
 
 
-CALENDAR_COLORS = ("#4285f4", "#f6bf26", "#33b679", "#e67c73", "#8e24aa", "#f4511e", "#039be5", "#7986cb")
-
-
-def usable_color(color, position):
-    """`color` when it follows the contract, else a stand-in that keeps calendars apart."""
-    if isinstance(color, str) and _COLOR.match(color):
-        return color
-    return CALENDAR_COLORS[position % len(CALENDAR_COLORS)]
+def is_color(text):
+    """True when `text` is a colour the contract accepts."""
+    return isinstance(text, str) and bool(_COLOR.match(text))
 
 
 def is_https_url(text):
@@ -149,8 +144,14 @@ def event_problems(event):
     return _validate_event(0, event)
 
 
-def serialize(doc):
-    return json.dumps(doc, ensure_ascii=False, indent=2) + "\n"
+def checked(doc):
+    """The document as the text to write, and every reason not to write it."""
+    text = json.dumps(doc, ensure_ascii=False, indent=2) + "\n"
+    problems = validate(doc)
+    size = size_problem(text)
+    if size:
+        problems.append(size)
+    return text, problems
 
 
 def size_problem(text):

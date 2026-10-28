@@ -1,4 +1,4 @@
-"""The steps sync/setup takes with feed addresses and the config file.
+"""The steps sync/setup takes with the config file and feed addresses.
 
 Addresses arrive on file descriptor 3 and go into the keyring on stdin, so
 none of them is ever a process argument. Every config is written private.
@@ -9,11 +9,8 @@ import os
 import subprocess
 from pathlib import Path
 
-from .ics import feed_id
-from .keyring import APPLICATION
-
-LABEL = "Omarchy calendar feed"
-KEYRING_SECONDS = 30
+from . import keyring
+from .feeds import entry_text, feed_entries, feed_id
 
 
 def store_in_keyring(urls, run=subprocess.run):
@@ -21,7 +18,7 @@ def store_in_keyring(urls, run=subprocess.run):
     entries = []
     for url in urls:
         secret_id = feed_id(url)
-        if not _stored(secret_id, url, run):
+        if not keyring.store(secret_id, url, run):
             return None
         entries.append({"secret": secret_id})
     return entries
@@ -36,19 +33,17 @@ def plain_entries(urls):
 
 def forget_unused(keep, run=subprocess.run):
     """Clear every feed address in the keyring whose id is not in `keep`."""
-    for secret_id in _stored_ids(run):
+    for secret_id in keyring.stored_ids(run):
         if secret_id not in keep:
-            _run(run, ["secret-tool", "clear", "application", APPLICATION, "feed", secret_id])
+            keyring.clear(secret_id, run)
 
 
 def keyring_ids(config):
     ids = set()
-    feeds = config.get("ics")
-    if not isinstance(feeds, list):
-        return ids
-    for feed in feeds:
-        if isinstance(feed, dict) and feed.get("secret"):
-            ids.add(str(feed["secret"]))
+    for entry in feed_entries(config.get("ics")):
+        secret_id = entry_text(entry, "secret")
+        if secret_id:
+            ids.add(secret_id)
     return ids
 
 
@@ -120,8 +115,9 @@ COMMANDS = {
 
 
 def main(argv):
-    command = COMMANDS[argv[0]]
-    command(*argv[1:])
+    name = argv[0]
+    arguments = argv[1:]
+    COMMANDS[name](*arguments)
 
 
 def _given_addresses(addresses):
@@ -133,29 +129,3 @@ def _given_addresses(addresses):
         if line.strip():
             urls.append(line.strip())
     return urls
-
-
-def _stored(secret_id, url, run):
-    arguments = ["secret-tool", "store", "--label", LABEL, "application", APPLICATION, "feed", secret_id]
-    return _run(run, arguments, url) == 0
-
-
-def _stored_ids(run):
-    arguments = ["secret-tool", "search", "--all", "application", APPLICATION]
-    try:
-        completed = run(arguments, capture_output=True, text=True, timeout=KEYRING_SECONDS)
-    except (OSError, subprocess.TimeoutExpired):
-        return []
-    ids = []
-    for line in (completed.stdout + completed.stderr).splitlines():
-        name, _, value = line.partition(" = ")
-        if name.strip() == "attribute.feed":
-            ids.append(value.strip())
-    return ids
-
-
-def _run(run, arguments, given=""):
-    try:
-        return run(arguments, input=given, capture_output=True, text=True, timeout=KEYRING_SECONDS).returncode
-    except (OSError, subprocess.TimeoutExpired):
-        return 1

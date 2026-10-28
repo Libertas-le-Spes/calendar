@@ -5,7 +5,7 @@ from unittest import mock
 import icalendar
 
 from omarchy_calendar_sync import feed_expansion
-from omarchy_calendar_sync.errors import TooManyEvents
+from omarchy_calendar_sync.errors import CalendarUnreadable, TooManyEvents
 
 LAST_DAY = date(2026, 10, 30)
 START = datetime(2026, 10, 1, tzinfo=timezone.utc)
@@ -66,7 +66,7 @@ class TestAffordableCalendar(unittest.TestCase):
     def test_affordable_series_that_together_cost_too_much_refuse_the_calendar(self):
         calendar = calendar_of(vevent("one@example.invalid", {"FREQ": "DAILY"}), vevent("two@example.invalid", {"FREQ": "DAILY"}))
         with mock.patch.object(feed_expansion, "REPEAT_STEPS_PER_CALENDAR", 21):
-            with self.assertRaises(TooManyEvents):
+            with self.assertRaises(CalendarUnreadable):
                 feed_expansion.affordable_calendar(icalendar, calendar, LAST_DAY)
 
     def test_affordable_series_within_the_calendar_budget_are_all_kept(self):

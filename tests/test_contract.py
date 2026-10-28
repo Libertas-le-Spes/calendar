@@ -1,9 +1,10 @@
 import json
 import re
 import unittest
+from unittest import mock
 from pathlib import Path
 
-from omarchy_calendar_sync import contract
+from omarchy_calendar_sync import colors, contract
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -218,26 +219,37 @@ class TestDocumentSize(unittest.TestCase):
     def test_the_size_counts_bytes_not_characters(self):
         self.assertNotEqual(contract.size_problem("é" * (contract.MAX_DOCUMENT_BYTES // 2 + 1)), "")
 
-    def test_serialize_ends_with_a_newline_and_reads_back(self):
+    def test_a_sound_document_is_checked_into_text_that_reads_back(self):
         doc = document_with([sound_row()])
-        text = contract.serialize(doc)
+        text, problems = contract.checked(doc)
+        self.assertEqual(problems, [])
         self.assertTrue(text.endswith("\n"))
         self.assertEqual(json.loads(text), doc)
+
+    def test_a_document_over_the_size_ceiling_is_checked_into_a_problem(self):
+        with mock.patch.object(contract, "MAX_DOCUMENT_BYTES", 10):
+            _, problems = contract.checked(document_with([sound_row()]))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("more than 10", problems[0])
+
+    def test_an_invalid_row_is_checked_into_a_problem(self):
+        _, problems = contract.checked(document_with([sound_row(allDay="no")]))
+        self.assertEqual(problems, ["events[0].allDay must be a boolean"])
 
 
 class TestUsableColor(unittest.TestCase):
     def test_a_contract_color_is_kept(self):
-        self.assertEqual(contract.usable_color("#a1b2c3", 0), "#a1b2c3")
+        self.assertEqual(colors.usable_color("#a1b2c3", 0), "#a1b2c3")
 
     def test_a_color_with_alpha_takes_the_palette_color_for_its_position(self):
-        self.assertEqual(contract.usable_color("#a1b2c3ff", 1), contract.CALENDAR_COLORS[1])
+        self.assertEqual(colors.usable_color("#a1b2c3ff", 1), colors.CALENDAR_COLORS[1])
 
     def test_a_missing_color_takes_the_palette_color_for_its_position(self):
-        self.assertEqual(contract.usable_color(None, 0), contract.CALENDAR_COLORS[0])
+        self.assertEqual(colors.usable_color(None, 0), colors.CALENDAR_COLORS[0])
 
     def test_positions_past_the_palette_wrap_around(self):
-        position = len(contract.CALENDAR_COLORS) + 2
-        self.assertEqual(contract.usable_color("red", position), contract.CALENDAR_COLORS[2])
+        position = len(colors.CALENDAR_COLORS) + 2
+        self.assertEqual(colors.usable_color("red", position), colors.CALENDAR_COLORS[2])
 
 
 def widget_number(name):
