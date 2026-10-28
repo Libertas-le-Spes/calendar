@@ -45,7 +45,6 @@ class TestGuestSuggestions(unittest.TestCase):
         self.assertEqual(suggestions.guest_suggestions([{"id": "e"}], exclude=[]), [])
 
 
-
 class TestLengths(unittest.TestCase):
     def attendee_event(self, email, name):
         return {"attendees": [{"email": email, "displayName": name}]}

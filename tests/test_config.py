@@ -195,8 +195,9 @@ class TestConfigPermissions(unittest.TestCase):
     def test_a_config_others_can_change_is_refused_even_without_secrets(self):
         for mode in (0o620, 0o602):
             with self.subTest(mode=oct(mode)):
-                with self.assertRaises(config.ConfigError):
+                with self.assertRaises(config.ConfigError) as raised:
                     load_text("{}", file_status=status(stat.S_IFREG | mode))
+                self.assertIn("chmod 600", str(raised.exception))
 
     def test_a_config_in_a_folder_others_can_change_is_refused(self):
         with self.assertRaises(config.ConfigError) as raised:

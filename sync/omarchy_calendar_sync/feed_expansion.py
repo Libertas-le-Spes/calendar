@@ -13,8 +13,9 @@ as long as it lasts.
 
 from .errors import CalendarUnreadable, TooManyEvents
 from .limits import EVENTS_PER_CALENDAR, EXPANSION_SECONDS, REPEAT_STEPS_PER_CALENDAR, REPEAT_STEPS_PER_SERIES
-from .repeat_cost import is_single, series_cost, touches, window_dates
+from .repeat_cost import series_cost, window_dates
 from .time_budget import TimeBudgetSpent, time_budget
+from .window_events import is_single, touches
 
 
 class _Series:
@@ -52,25 +53,25 @@ def occurrences_in_window(rie, calendar, start, end):
 def _weigh(calendar, first_day, last_day):
     series = {}
     for vevent in calendar.walk("VEVENT"):
-        weight = series.setdefault(_series_key(vevent), _Series())
-        _add_weight(weight, vevent, first_day, last_day)
+        series_weight = series.setdefault(_series_key(vevent), _Series())
+        _add_weight(series_weight, vevent, first_day, last_day)
     return series
 
 
-def _add_weight(weight, vevent, first_day, last_day):
+def _add_weight(series_weight, vevent, first_day, last_day):
     try:
         if is_single(vevent) and not touches(vevent, first_day, last_day):
             return
-        weight.cost += series_cost(vevent, last_day)
-        weight.dates += window_dates(vevent, first_day, last_day)
-    except Exception:
-        weight.readable = False
+        series_weight.cost += series_cost(vevent, last_day)
+        series_weight.dates += window_dates(vevent, first_day, last_day)
+    except (ValueError, TypeError, OverflowError, AttributeError):
+        series_weight.readable = False
 
 
 def _left_out_keys(series):
     left_out = set()
-    for key, weight in series.items():
-        if not weight.readable or weight.cost > REPEAT_STEPS_PER_SERIES:
+    for key, series_weight in series.items():
+        if not series_weight.readable or series_weight.cost > REPEAT_STEPS_PER_SERIES:
             left_out.add(key)
     return left_out
 
@@ -78,10 +79,10 @@ def _left_out_keys(series):
 def _refuse_when_too_much(series, left_out):
     cost = 0
     dates = 0
-    for key, weight in series.items():
+    for key, series_weight in series.items():
         if key not in left_out:
-            cost += weight.cost
-            dates += weight.dates
+            cost += series_weight.cost
+            dates += series_weight.dates
     if cost > REPEAT_STEPS_PER_CALENDAR:
         raise CalendarUnreadable("its repeating events would take too long to expand")
     if dates > EVENTS_PER_CALENDAR:
@@ -93,14 +94,9 @@ def _kept(component, left_out, first_day, last_day):
         return True
     if _series_key(component) in left_out:
         return False
-    return not is_single(component) or _touches_or_unreadable(component, first_day, last_day)
-
-
-def _touches_or_unreadable(component, first_day, last_day):
-    try:
+    if is_single(component):
         return touches(component, first_day, last_day)
-    except Exception:
-        return False
+    return True
 
 
 def _series_key(vevent):

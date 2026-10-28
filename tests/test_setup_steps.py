@@ -2,7 +2,9 @@ import contextlib
 import io
 import os
 import subprocess
+import re
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from omarchy_calendar_sync import setup_steps
@@ -134,7 +136,6 @@ class TestMain(unittest.TestCase):
                 step.assert_called_once_with("first", "second")
 
 
-
 class TestWritePrivateFailure(unittest.TestCase):
     def test_a_write_that_fails_leaves_no_partial_file(self):
         with mock.patch.object(setup_steps.os, "open", return_value=7), \
@@ -143,6 +144,29 @@ class TestWritePrivateFailure(unittest.TestCase):
             with self.assertRaises(OSError):
                 setup_steps.write_private("made-up.json", {"backend": "gws"})
         self.assertEqual(removed.call_args_list, [mock.call("made-up.json.partial"), mock.call("made-up.json.partial")])
+
+
+SETUP = Path(__file__).parent.parent / "sync" / "setup"
+
+
+class TestSetupAsksBeforeAPlainAddress(unittest.TestCase):
+    def test_the_first_attempt_never_allows_a_plain_address(self):
+        first = re.search(r"(?m)^ *setup_step write-ics .*$", SETUP.read_text()).group(0)
+        self.assertIn(" no 3<", first)
+
+    def test_setup_listens_for_the_same_code_the_step_exits_with(self):
+        self.assertIn('[ "$stored" = %d ]' % setup_steps.KEYRING_REFUSED, SETUP.read_text())
+
+    def test_only_a_yes_writes_a_plain_address(self):
+        answers = re.search(r'(?ms)case "\$answer" in\n(.*?)\n *esac', SETUP.read_text()).group(1)
+        writing = re.findall(r"(?m)^ *(\S+)\) setup_step write-ics .* yes 3<", answers)
+        self.assertEqual(writing, ["y|Y|yes|Yes"])
+
+    def test_any_other_answer_changes_nothing(self):
+        answers = re.search(r'(?ms)case "\$answer" in\n(.*?)\n *esac', SETUP.read_text()).group(1)
+        default = re.search(r"(?m)^ *\*\) (.*)$", answers).group(1)
+        self.assertIn("exit 1", default)
+        self.assertNotIn("write-ics", default)
 
 
 if __name__ == "__main__":

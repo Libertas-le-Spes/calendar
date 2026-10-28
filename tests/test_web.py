@@ -52,7 +52,7 @@ class TestSchemes(unittest.TestCase):
 class TestWhichOpenerIsUsed(unittest.TestCase):
     def opener_built_by(self, open_function):
         built = mock.Mock()
-        with mock.patch.object(web, "_opener", return_value=built) as make:
+        with mock.patch.object(web, "_opener", autospec=True, return_value=built) as make:
             open_function(urllib.request.Request("https://made-up.example.invalid/"), 5)
         built.open.assert_called_once()
         return make.call_args.args[0]

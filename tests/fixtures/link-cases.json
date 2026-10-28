@@ -94,5 +94,13 @@
   {
     "link": "https://made-up.example.invalid/x\u2028",
     "safe": false
+  },
+  {
+    "link": "https://made-up\u0085.example.invalid/",
+    "safe": false
+  },
+  {
+    "link": "https://made-up\ufeff.example.invalid/",
+    "safe": false
   }
 ]

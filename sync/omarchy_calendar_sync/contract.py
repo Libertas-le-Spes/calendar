@@ -70,8 +70,8 @@ _COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 # match Model.safeUrl exactly: when the widget is stricter than the sync, a
 # URL is written, then silently refused, and there is no button and no error.
 _HTTPS_URL = re.compile(
-    r"https://[^\s\"'<>\\@/?#\x00-\x1f\x7f\x85﻿]+"
-    r"(?:[/?#][^\s\"'<>\\\x00-\x1f\x7f\x85﻿]*)?"
+    r"https://[^\s\"'<>\\@/?#\x00-\x1f\x7f\x85\ufeff]+"
+    r"(?:[/?#][^\s\"'<>\\\x00-\x1f\x7f\x85\ufeff]*)?"
 )
 
 

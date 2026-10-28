@@ -80,7 +80,6 @@ class TestWriteSupport(unittest.TestCase):
         self.assertFalse(eds.Eds.can_write)
 
 
-
 class ManyInstances:
     def __init__(self, available):
         self.available = available

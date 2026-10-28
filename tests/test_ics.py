@@ -307,7 +307,6 @@ class TestBackendSelection(unittest.TestCase):
         self.assertFalse(built.can_write)
 
 
-
 class FakeStream:
     def __init__(self, chunks):
         self.chunks = list(chunks)
@@ -673,7 +672,7 @@ class TestFeedsTogether(unittest.TestCase):
         self.assertEqual(len(calendars), 1)
         self.assertIn("the feeds together are larger than", stdout.getvalue())
 
-    def test_a_feed_that_takes_too_long_to_read_is_skipped(self):
+    def test_reading_a_feed_past_its_time_is_a_feed_problem(self):
         def slow_parse(body):
             time.sleep(5)
 
@@ -682,7 +681,6 @@ class TestFeedsTogether(unittest.TestCase):
         with mock.patch.object(ics, "PARSE_SECONDS", 0.2):
             with self.assertRaises(errors.FeedProblem):
                 ics._parse(library, b"made-up")
-
 
 
 class TestOneOccurrenceThatCannotBeConverted(unittest.TestCase):
@@ -696,13 +694,30 @@ class TestOneOccurrenceThatCannotBeConverted(unittest.TestCase):
                 raise OverflowError("made-up")
             return real(component, *rest)
 
-        with mock.patch.object(ics, "occurrence_to_event", side_effect=convert):
+        with mock.patch.object(ics, "occurrence_to_event", autospec=True, side_effect=convert), \
+                contextlib.redirect_stdout(io.StringIO()):
             found = c.events(calendar_id, "2026-09-01T00:00:00+00:00", "2026-11-30T00:00:00+00:00")
         titles = set()
         for event in found:
             titles.add(event["summary"])
         self.assertNotIn("Standup", titles)
         self.assertNotEqual(titles, set())
+
+
+class TestUnprintableHosts(unittest.TestCase):
+    def test_a_host_with_control_characters_is_not_printed(self):
+        self.assertEqual(feeds.redact("https://a\x1bb.example.invalid/x"), "(unprintable host)")
+
+
+class TestSkippedOccurrenceIsNamed(unittest.TestCase):
+    def test_an_occurrence_that_cannot_be_read_is_named_in_the_log(self):
+        c = client()
+        calendar_id = c.calendars()[0]["id"]
+        stdout = io.StringIO()
+        with mock.patch.object(ics, "occurrence_to_event", autospec=True, side_effect=OverflowError("made-up")), \
+                contextlib.redirect_stdout(stdout):
+            c.events(calendar_id, "2026-09-01T00:00:00+00:00", "2026-11-30T00:00:00+00:00")
+        self.assertIn("skipping an event in %s: it cannot be read (OverflowError)" % calendar_id, stdout.getvalue())
 
 
 if __name__ == "__main__":

@@ -298,7 +298,6 @@ class TestWritableCalendars(unittest.TestCase):
         self.assertIs(config.DEFAULTS["write"], False)
 
 
-
 class CrowdedCalendarGws(FakeGws):
     def events(self, calendar_id, time_min, time_max):
         if calendar_id == "crowded@example.com":
@@ -503,7 +502,7 @@ class TestFloodedCalendar(unittest.TestCase):
         self.assertEqual([row["id"] for row in written_rows(written)], ["quiet-copy"])
 
 
-class TestCopiesThatDifferOnlyInWhereOrWhen(unittest.TestCase):
+class TestCopiesThatDifferInPlaceDetailsOrReminders(unittest.TestCase):
     START = "2026-08-10T19:15:00-05:00"
     CALENDARS = [
         {"id": "aaa@example.com", "name": "Aaa made-up", "color": "#f83a22"},

@@ -47,7 +47,9 @@ class TestDailyAndLongerRules(unittest.TestCase):
 
     def test_a_birthday_that_names_its_month_and_day_stays_cheap(self):
         rule = {"FREQ": "YEARLY", "BYMONTH": [5], "BYMONTHDAY": [12]}
-        self.assertEqual(cost(date(1970, 5, 12), rule), 57 * 12)
+        years_walked = 57
+        dates_a_year_can_hold_for_one_month_day = 12
+        self.assertEqual(cost(date(1970, 5, 12), rule), years_walked * dates_a_year_can_hold_for_one_month_day)
 
     def test_a_weekly_series_costs_its_weeks_times_its_listed_days(self):
         rule = {"FREQ": "WEEKLY", "BYDAY": ["MO", "TU", "WE", "TH", "FR"]}
@@ -90,22 +92,6 @@ class TestDatesInTheWindow(unittest.TestCase):
 
     def test_a_series_that_ended_before_the_window_lands_nowhere(self):
         self.assertEqual(self.dates(date(2015, 1, 1), {"FREQ": "DAILY", "UNTIL": date(2016, 1, 1)}), 0)
-
-
-class TestWhichEventsArePlain(unittest.TestCase):
-    def test_an_event_that_neither_repeats_nor_moves_an_occurrence_is_plain(self):
-        self.assertTrue(repeat_cost.is_single(vevent(date(2026, 10, 9))))
-
-    def test_a_repeating_event_is_not_plain(self):
-        self.assertFalse(repeat_cost.is_single(vevent(date(2026, 10, 9), {"FREQ": "DAILY"})))
-
-    def test_a_plain_event_ending_inside_the_window_touches_it(self):
-        event = vevent(date(2026, 9, 1))
-        event.add("DTEND", date(2026, 10, 2))
-        self.assertTrue(repeat_cost.touches(event, date(2026, 10, 1), date(2026, 10, 31)))
-
-    def test_a_plain_event_before_the_window_does_not_touch_it(self):
-        self.assertFalse(repeat_cost.touches(vevent(date(2026, 9, 1)), date(2026, 10, 1), date(2026, 10, 31)))
 
 
 class TestTheWholeEvent(unittest.TestCase):

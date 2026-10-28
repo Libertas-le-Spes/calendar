@@ -1,4 +1,5 @@
-"""What expanding one repeating event would cost, before it is expanded.
+"""What expanding one repeating event would cost, and how many dates it lands
+in the window, worked out before anything is expanded.
 
 Expanding a repeat rule walks every period from the rule's first one, so a
 rule that repeats every second from years ago keeps the sync busy for hours.
@@ -40,7 +41,7 @@ def series_cost(vevent, last_day):
 
     Raises ValueError for an event whose dates or rule cannot be read.
     """
-    first_day = _start_day(vevent)
+    first_day = start_day(vevent)
     cost = _extra_dates(vevent.get("RDATE"))
     for rule in _listed(vevent.get("RRULE")):
         cost += _rule_dates(rule, first_day, last_day)
@@ -49,7 +50,7 @@ def series_cost(vevent, last_day):
 
 def window_dates(vevent, window_first, window_last):
     """An estimate of the dates `vevent` lands on between the two days."""
-    first_day = _start_day(vevent)
+    first_day = start_day(vevent)
     rules = _listed(vevent.get("RRULE"))
     dates = _extra_dates(vevent.get("RDATE"))
     if not rules:
@@ -60,29 +61,11 @@ def window_dates(vevent, window_first, window_last):
     return dates
 
 
-def is_single(vevent):
-    """True for an event that neither repeats nor changes one occurrence of a series."""
-    for name in ("RRULE", "RDATE", "RECURRENCE-ID"):
-        if vevent.get(name) is not None:
-            return False
-    return True
-
-
-def touches(vevent, window_first, window_last):
-    """True when a single event lasts into the days between the two."""
-    first_day = _start_day(vevent)
-    end = vevent.get("DTEND")
-    last_day = first_day
-    if end is not None:
-        last_day = _day_of(end.dt)
-    return first_day <= window_last and last_day >= window_first
-
-
-def _start_day(vevent):
+def start_day(vevent):
     start = vevent.get("DTSTART")
     if start is None:
         raise ValueError("an event has no start")
-    return _day_of(start.dt)
+    return day_of(start.dt)
 
 
 def _rule_dates(rule, from_day, last_day):
@@ -119,7 +102,7 @@ def _end_day(rule, last_day):
     until = _first(rule.get("UNTIL"))
     if until is None:
         return last_day
-    return min(_day_of(until), last_day)
+    return min(day_of(until), last_day)
 
 
 def _extra_dates(rdates):
@@ -138,7 +121,7 @@ def _interval(rule):
     raise ValueError("a repeat rule's interval must be a positive whole number")
 
 
-def _day_of(value):
+def day_of(value):
     if isinstance(value, datetime):
         return value.date()
     if isinstance(value, date):

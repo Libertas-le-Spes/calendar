@@ -32,7 +32,6 @@ class TestRowBudget(unittest.TestCase):
             self.assertTrue(budget.admit(rows(1)))
 
 
-
 class TestReserve(unittest.TestCase):
     def test_room_is_kept_for_the_rest_of_the_file(self):
         size = contract.written_size(rows(1))

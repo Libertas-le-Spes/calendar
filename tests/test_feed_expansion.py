@@ -162,5 +162,16 @@ class TestOccurrencesInWindow(unittest.TestCase):
                 feed_expansion.occurrences_in_window(library, calendar_of(), START, END)
 
 
+class TestPastEvents(unittest.TestCase):
+    def test_plain_events_from_before_the_window_do_not_count_towards_the_calendar_limit(self):
+        past = []
+        for number in range(5):
+            past.append(single("past-%d@example.invalid" % number, date(2020, 1, number + 1)))
+        calendar = calendar_of(*past, single("now@example.invalid", date(2026, 10, 9)))
+        with mock.patch.object(feed_expansion, "EVENTS_PER_CALENDAR", 3):
+            trimmed, left_out = feed_expansion.affordable_calendar(icalendar, calendar, FIRST_DAY, LAST_DAY)
+        self.assertEqual((uids(trimmed), left_out), (["now@example.invalid"], 0))
+
+
 if __name__ == "__main__":
     unittest.main()

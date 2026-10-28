@@ -10,7 +10,7 @@ def spin_until(moment):
         pass
 
 
-def record_alarm(_signal_number, _frame):
+def stand_in_handler(_signal_number, _frame):
     pass
 
 
@@ -23,12 +23,12 @@ class TestTimeBudget(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 5)
 
     def test_the_timer_and_the_previous_handler_are_restored_after_a_step(self):
-        previous = signal.signal(signal.SIGALRM, record_alarm)
+        previous = signal.signal(signal.SIGALRM, stand_in_handler)
         try:
             with time_budget(5):
                 pass
             self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
-            self.assertIs(signal.getsignal(signal.SIGALRM), record_alarm)
+            self.assertIs(signal.getsignal(signal.SIGALRM), stand_in_handler)
         finally:
             signal.signal(signal.SIGALRM, previous)
 

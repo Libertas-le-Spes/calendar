@@ -453,7 +453,7 @@ function visibleEvents(events, hidden, options) {
 
 // Only https is ever launched. A meeting link is supplied by whoever sent the
 // invitation, so treating it as trusted input would be a mistake.
-var SAFE_URL = /^https:\/\/[^\s"'<>\\@\/?#\x00-\x1f\x7f\x85﻿]+(?:[\/?#][^\s"'<>\\\x00-\x1f\x7f\x85﻿]*)?$/
+var SAFE_URL = /^https:\/\/[^\s"'<>\\@\/?#\x00-\x1f\x7f\x85\ufeff]+(?:[\/?#][^\s"'<>\\\x00-\x1f\x7f\x85\ufeff]*)?$/
 
 function safeUrl(url) {
   var candidate = text(url).trim()

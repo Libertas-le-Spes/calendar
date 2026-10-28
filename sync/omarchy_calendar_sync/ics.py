@@ -318,15 +318,16 @@ class Ics:
 
         events = []
         for component in occurrences:
-            event = self._event_or_none(component, google_id)
+            event = self._event_or_none(component, google_id, calendar_id)
             if event is not None:
                 events.append(event)
         return events
 
-    def _event_or_none(self, component, google_id):
+    def _event_or_none(self, component, google_id, calendar_id):
         try:
             return occurrence_to_event(component, self._local_tz, self._identity, google_id)
-        except Exception:
+        except (ValueError, TypeError, OverflowError, AttributeError) as error:
+            print("skipping an event in %s: it cannot be read (%s)" % (calendar_id, type(error).__name__))
             return None
 
     def auth_hint(self, _cfg):
