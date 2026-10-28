@@ -43,6 +43,10 @@ WRITE_SCOPE="https://www.googleapis.com/auth/calendar.events"
 
 step() { printf '\n==> %s\n' "$1"; }
 
+feed_setup() {
+  python3 -I -B -c 'import sys; sys.path.insert(0, sys.argv[1]); from omarchy_calendar_sync import feed_setup; feed_setup.main(sys.argv[2:])' "$SCRIPT_DIR" "$@"
+}
+
 install_timer_and_sync() {
   step "Installing the systemd timer"
   mkdir -p "$HOME/.config/systemd/user"
@@ -72,7 +76,7 @@ EOF
 
 setup_ics() {
   step "Reading your calendar from its secret iCal address"
-  if ! python3 -c 'import icalendar, recurring_ical_events' 2>/dev/null; then
+  if ! python3 -I -c 'import icalendar, recurring_ical_events' 2>/dev/null; then
     echo "  Installing python-icalendar and python-recurring-ical-events"
     sudo pacman -S --needed --noconfirm python-icalendar python-recurring-ical-events
   fi
@@ -100,8 +104,8 @@ EOF
     # every user on the machine through ps, and the address is a password.
     # No .pyc either: the shell reloads the plugin when its folder changes.
     local problem
-    problem=$(printf '%s' "$line" | PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$SCRIPT_DIR" python3 -c \
-      'import sys; from omarchy_calendar_sync.ics import url_problem; print(url_problem(sys.stdin.read()))')
+    problem=$(printf '%s' "$line" | python3 -I -B -c \
+      'import sys; sys.path.insert(0, sys.argv[1]); from omarchy_calendar_sync.ics import url_problem; print(url_problem(sys.stdin.read()))' "$SCRIPT_DIR")
     if [ -n "$problem" ]; then
       printf '  Not this one: %s\n' "$problem"
       continue
@@ -119,32 +123,9 @@ EOF
   local candidate
   candidate=$(mktemp "$CONFIG.XXXXXX")
   trap 'rm -f "$candidate"' EXIT
-  # The addresses go in on file descriptor 3 and the program on stdin. As
-  # arguments, they would show to every user on the machine through ps.
-  python3 - "$CONFIG" "$candidate" "$identity" 3< <(printf '%s\n' "${urls[@]}") <<'PYEOF'
-import json, os, pathlib, sys
-
-path, candidate = pathlib.Path(sys.argv[1]), sys.argv[2]
-identity = sys.argv[3].strip()
-with os.fdopen(3) as stream:
-    urls = [line.strip() for line in stream if line.strip()]
-config = {}
-if path.exists():
-    try:
-        config = json.loads(path.read_text())
-    except ValueError:
-        config = {}
-config["backend"] = "ics"
-config["ics"] = [{"url": url.strip()} for url in urls]
-config["write"] = False
-if identity:
-    config["identity"] = identity
-# The file now holds the secret addresses.
-fd = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-with os.fdopen(fd, "w") as stream:
-    stream.write(json.dumps(config, indent=2) + "\n")
-os.chmod(candidate, 0o600)
-PYEOF
+  # The addresses go in on file descriptor 3. As arguments, they would show
+  # to every user on the machine through ps.
+  feed_setup write-ics "$CONFIG" "$candidate" "$identity" 3< <(printf '%s\n' "${urls[@]}")
 
   step "Testing the feeds"
   "$SYNC_BIN" --config "$candidate" || {
@@ -153,6 +134,7 @@ PYEOF
   }
   mv -f "$candidate" "$CONFIG"
   echo "  backend set to ics with ${#urls[@]} feed(s) in $CONFIG"
+  feed_setup finish-ics "$CONFIG"
 
   install_timer_and_sync
   exit 0
@@ -185,7 +167,7 @@ fi
 # A second run must not turn writing off behind the user's back: the
 # question defaults to what the config already says, and without a
 # terminal the config's value stands.
-CURRENT_WRITE=$(python3 -c '
+CURRENT_WRITE=$(python3 -I -c '
 import json, pathlib, sys
 try:
     print("1" if json.loads(pathlib.Path(sys.argv[1]).read_text()).get("write") is True else "0")
@@ -369,18 +351,21 @@ that dialog.
 EOF
 pause
 
-mkdir -p "$PROFILE"
+(umask 077 && mkdir -p "$PROFILE")
+chmod 700 "$PROFILE"
 if [ -f "$PROFILE/client_secret.json" ]; then
   step "Client secret is already installed at $PROFILE/client_secret.json, skipping"
 else
   step "Installing the client secret"
-  downloaded=$(find "$HOME/Downloads" -maxdepth 1 -name 'client_secret_*.json' -print -quit 2>/dev/null || true)
+  downloaded=$(find "$HOME/Downloads" -maxdepth 1 -name 'client_secret_*.json' -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -n 1 | cut -d' ' -f2- || true)
   if [ -n "$downloaded" ]; then
-    mv "$downloaded" "$PROFILE/client_secret.json"
+    echo "  Using the newest download, $downloaded"
+    install -m 600 "$downloaded" "$PROFILE/client_secret.json"
+    rm -f "$downloaded"
   else
     printf 'Path to the downloaded JSON (rerunning? it belongs at %s): ' "$PROFILE/client_secret.json"
     read -r manual
-    cp "${manual/#\~/$HOME}" "$PROFILE/client_secret.json"
+    install -m 600 "${manual/#\~/$HOME}" "$PROFILE/client_secret.json"
   fi
 fi
 chmod 600 "$PROFILE/client_secret.json"
@@ -428,7 +413,7 @@ step "Verifying calendar access"
 # Surface a real error rather than reading `items` out of an error body and
 # reporting it as zero calendars.
 GOOGLE_WORKSPACE_CLI_CONFIG_DIR="$PROFILE" "$GWS" calendar calendarList list 2>/dev/null \
-  | python3 -c '
+  | python3 -I -c '
 import json, sys
 
 payload = json.load(sys.stdin)
@@ -475,28 +460,6 @@ EOF
   fi
 fi
 mkdir -p "$(dirname "$CONFIG")"
-python3 - "$CONFIG" "$gws_path" "$PROFILE" "$WRITE" <<'PYEOF'
-import json, pathlib, sys
-
-path, gws_path, profile = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
-write = sys.argv[4] == "1"
-config = {}
-if path.exists():
-    try:
-        config = json.loads(path.read_text())
-    except ValueError:
-        config = {}
-# This flow sets up the Google Cloud sync, so it must also select it.
-# Without this line, a config left by setup --ics keeps reading the feeds.
-config["backend"] = "gws"
-config["gwsPath"] = gws_path
-config["profile"] = profile
-config["write"] = write
-path.write_text(json.dumps(config, indent=2) + "\n")
-print("  backend set to gws")
-print("  gwsPath set to", gws_path)
-print("  profile set to", profile)
-print("  write set to", write)
-PYEOF
+feed_setup write-gws "$CONFIG" "$gws_path" "$PROFILE" "$WRITE"
 
 install_timer_and_sync

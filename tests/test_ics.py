@@ -9,7 +9,7 @@ from unittest import mock
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from omarchy_calendar_sync import cli, config, ics, normalize
+from omarchy_calendar_sync import cli, config, ics, keyring, normalize
 from omarchy_calendar_sync.errors import CalendarUnreadable
 from omarchy_calendar_sync.config import DayWindow
 
@@ -145,11 +145,9 @@ def sync_rows(c):
 class TestFeeds(unittest.TestCase):
     def test_config_shapes(self):
         feeds, _refused = ics.parse_feeds(URL)
-        self.assertEqual(feeds[0]["url"], URL)
-        self.assertEqual(
-            ics.parse_feeds([{"url": "webcal://x.example/a.ics", "name": "N"}])[0],
-            [{"url": "https://x.example/a.ics", "name": "N", "color": ""}],
-        )
+        self.assertEqual(feeds[0].url, URL)
+        feeds, _refused = ics.parse_feeds([{"url": "webcal://x.example/a.ics", "name": "N"}])
+        self.assertEqual((feeds[0].url, feeds[0].name, feeds[0].color), ("https://x.example/a.ics", "N", ""))
         self.assertEqual(ics.parse_feeds([None, "", {"name": "no url"}]), ([], []))
 
     def test_the_secret_url_never_reaches_ids_or_names(self):
@@ -422,7 +420,7 @@ class TestFeedAddressRules(unittest.TestCase):
 
     def test_an_unsafe_feed_is_set_apart_from_the_feeds(self):
         feeds, refused = ics.parse_feeds(["http://feeds.example.invalid/a.ics", "https://feeds.example.invalid/b.ics"])
-        self.assertEqual([feed["url"] for feed in feeds], ["https://feeds.example.invalid/b.ics"])
+        self.assertEqual([feed.url for feed in feeds], ["https://feeds.example.invalid/b.ics"])
         self.assertEqual(refused, ["http://feeds.example.invalid/a.ics"])
 
     def test_an_unsafe_feed_is_never_fetched_and_its_host_alone_is_logged(self):
@@ -485,3 +483,78 @@ class TestScrubLayer(unittest.TestCase):
         self.assertIn("the server moved …", stdout.getvalue())
         self.assertNotIn("SECRETMADEUP", stdout.getvalue())
         self.assertNotIn("SECRETMADEUP", str(raised.exception))
+
+
+KEYRING_ID = "ics-0123456789ab"
+
+
+def keyring_lookup(stored):
+    def lookup(secret_id):
+        if secret_id not in stored:
+            raise keyring.KeyringMissing("the keyring holds no address for this feed; run sync/setup --ics")
+        return stored[secret_id]
+    return lookup
+
+
+class TestKeyringFeeds(unittest.TestCase):
+    def test_a_feed_named_by_a_keyring_id_becomes_a_keyring_feed(self):
+        feeds, _refused = ics.parse_feeds([{"secret": KEYRING_ID, "name": "Made-up"}])
+        self.assertIsInstance(feeds[0], ics.KeyringFeed)
+        self.assertEqual(feeds[0].ident(), KEYRING_ID)
+
+    def test_the_address_is_looked_up_once_and_fetched(self):
+        fetched = []
+        looked_up = mock.Mock(side_effect=keyring_lookup({KEYRING_ID: URL}))
+
+        def fetch(url):
+            fetched.append(url)
+            return FEED
+
+        c = ics.Ics([{"secret": KEYRING_ID}], fetch=fetch, local_tz=SAO_PAULO, lookup=looked_up)
+        calendars = c.calendars()
+        looked_up.assert_called_once_with(KEYRING_ID)
+        self.assertEqual(fetched, [URL])
+        self.assertEqual(calendars[0]["id"], KEYRING_ID)
+
+    def test_a_feed_missing_from_the_keyring_is_skipped_and_named_by_its_id(self):
+        stdout = io.StringIO()
+        c = ics.Ics([{"secret": KEYRING_ID}, URL], fetch=lambda url: FEED, local_tz=SAO_PAULO, lookup=keyring_lookup({}))
+        with contextlib.redirect_stdout(stdout):
+            calendars = c.calendars()
+        self.assertEqual(len(calendars), 1)
+        self.assertIn("skipping keyring feed %s: the keyring holds no address" % KEYRING_ID, stdout.getvalue())
+
+    def test_an_unsafe_address_in_the_keyring_is_never_fetched(self):
+        fetched = []
+        stdout = io.StringIO()
+        c = ics.Ics([{"secret": KEYRING_ID}], fetch=fetched.append, local_tz=SAO_PAULO,
+                    lookup=keyring_lookup({KEYRING_ID: "http://feeds.example.invalid/private-SECRETMADEUP.ics"}))
+        with contextlib.redirect_stdout(stdout), self.assertRaises(ics.IcsError):
+            c.calendars()
+        self.assertEqual(fetched, [])
+        self.assertNotIn("SECRETMADEUP", stdout.getvalue())
+
+
+class TestLibraryVersion(unittest.TestCase):
+    def check_with(self, version):
+        library = mock.Mock(__version__=version)
+        with mock.patch.object(ics, "_load_libs", return_value=(library, mock.Mock())):
+            client(feeds=[URL]).check()
+
+    def test_the_minimum_version_is_accepted(self):
+        self.check_with("7.2.2")
+
+    def test_an_older_version_with_known_denial_of_service_bugs_is_refused(self):
+        with self.assertRaises(ics.IcsMissing) as raised:
+            self.check_with("7.2.1")
+        self.assertIn("7.2.2 or newer is required, found 7.2.1", str(raised.exception))
+
+
+class TestOnlyUnsafeFeeds(unittest.TestCase):
+    def test_a_config_whose_feeds_are_all_unsafe_is_told_why_rather_than_that_it_has_none(self):
+        c = client(feeds=["http://feeds.example.invalid/a.ics"])
+        c.check()
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout), self.assertRaises(ics.IcsError) as raised:
+            c.calendars()
+        self.assertIn("expected an https:// or webcal:// address", str(raised.exception))

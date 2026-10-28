@@ -28,7 +28,7 @@ from datetime import date, datetime, timedelta
 
 from .contract import CALENDAR_COLORS
 from .errors import CalendarUnreadable, SyncError, TooManyEvents
-from . import web
+from . import keyring, web
 from .feed_expansion import affordable_calendar, occurrences_in_window
 from .limits import FEED_BYTES
 from .localzone import resolve_local_timezone
@@ -41,6 +41,7 @@ CHUNK_BYTES = 64 * 1024
 # Google's calendar colours, keeping two feeds apart on the grid.
 FEED_COLORS = CALENDAR_COLORS
 USER_AGENT = "omarchy-calendar-sync"
+MINIMUM_ICALENDAR = (7, 2, 2)
 
 
 class IcsError(SyncError):
@@ -180,12 +181,57 @@ def google_event_url(uid, calendar_id):
     return "https://calendar.google.com/calendar/event?eid=" + eid.decode().rstrip("=")
 
 
-def parse_feeds(raw):
-    """Normalize the `ics` config value into a list of {url, name, color}.
+class AddressFeed:
+    """A feed whose address is written in the config."""
+
+    def __init__(self, url, name, color):
+        self.url = url
+        self.name = name
+        self.color = color
+
+    def ident(self):
+        return feed_id(self.url)
+
+    def label(self):
+        return redact(self.url)
+
+    def address(self):
+        return self.url
+
+
+class KeyringFeed:
+    """A feed whose address sync/setup stored in the keyring."""
+
+    def __init__(self, secret_id, name, color, lookup):
+        self.secret_id = secret_id
+        self.name = name
+        self.color = color
+        self._lookup = lookup
+
+    def ident(self):
+        return self.secret_id
+
+    def label(self):
+        return "keyring feed " + self.secret_id
+
+    def address(self):
+        try:
+            url = feed_url(self._lookup(self.secret_id))
+        except keyring.KeyringMissing as missing:
+            raise FeedProblem(str(missing)) from None
+        unsafe = unsafe_reason(url)
+        if unsafe:
+            raise FeedProblem(unsafe)
+        return url
+
+
+def parse_feeds(raw, lookup=keyring.lookup):
+    """Read the `ics` config value into feeds.
 
     Accepts a single URL string, a list of URL strings, or a list of objects
-    with `url` and optional `name` and `color`. Returns the feeds and, apart,
-    the addresses refused as unsafe to fetch.
+    with either `url` or `secret` (a keyring id) and optional `name` and
+    `color`. Returns the feeds and, apart, the addresses refused as unsafe
+    to fetch.
     """
     if isinstance(raw, (str, dict)):
         raw = [raw]
@@ -196,19 +242,19 @@ def parse_feeds(raw):
             entry = {"url": entry}
         if not isinstance(entry, dict):
             continue
+        name = str(entry.get("name") or "").strip()
+        color = str(entry.get("color") or "").strip()
+        secret_id = str(entry.get("secret") or "").strip()
+        if secret_id:
+            feeds.append(KeyringFeed(secret_id, name, color, lookup))
+            continue
         url = feed_url(entry.get("url"))
         if not url:
             continue
         if unsafe_reason(url):
             refused.append(url)
             continue
-        feeds.append(
-            {
-                "url": url,
-                "name": str(entry.get("name") or "").strip(),
-                "color": str(entry.get("color") or "").strip(),
-            }
-        )
+        feeds.append(AddressFeed(url, name, color))
     return feeds, refused
 
 
@@ -347,10 +393,17 @@ def occurrence_to_event(component, local_tz, identity="", calendar_id=""):
     )
 
 
-def _skip(url, reason):
-    failure = scrubbed("%s: %s" % (redact(url), reason), url)
+def _skip(label, reason, url):
+    failure = scrubbed("%s: %s" % (label, reason), url)
     print("skipping " + failure)
     return failure
+
+
+def _dotted(version):
+    parts = []
+    for part in version:
+        parts.append(str(part))
+    return ".".join(parts)
 
 
 class Ics:
@@ -365,8 +418,8 @@ class Ics:
     # Feeds are read only.
     can_write = False
 
-    def __init__(self, feeds, identity="", fetch=None, local_tz=None):
-        self._feeds, self._refused = parse_feeds(feeds)
+    def __init__(self, feeds, identity="", fetch=None, local_tz=None, lookup=keyring.lookup):
+        self._feeds, self._refused = parse_feeds(feeds, lookup)
         self._identity = identity
         self._fetch = fetch or _http_get
         self._local_tz = local_tz if local_tz is not None else resolve_local_timezone()
@@ -383,7 +436,13 @@ class Ics:
 
     def check(self):
         _load_libs()
-        if not self._feeds:
+        found = self.version()
+        if found < MINIMUM_ICALENDAR:
+            raise IcsMissing(
+                "python-icalendar %s or newer is required, found %s; update the system packages"
+                % (_dotted(MINIMUM_ICALENDAR), _dotted(found))
+            )
+        if not self._feeds and not self._refused:
             raise IcsError(
                 "no feeds configured; add your calendar's secret iCal address "
                 "under \"ics\" in ~/.config/omarchy/calendar-sync.json"
@@ -394,28 +453,29 @@ class Ics:
         found = []
         failures = []
         for url in self._refused:
-            failures.append(_skip(url, unsafe_reason(url)))
+            failures.append(_skip(redact(url), unsafe_reason(url), url))
         for position, feed in enumerate(self._feeds):
-            url = feed["url"]
+            url = ""
             try:
+                url = feed.address()
                 body = self._fetch(url)
                 calendar = icalendar.Calendar.from_ical(body)
             except FeedProblem as problem:
-                failures.append(_skip(url, str(problem)))
+                failures.append(_skip(feed.label(), str(problem), url))
                 continue
             except Exception as error:
-                failures.append(_skip(url, "%s while reading the feed" % type(error).__name__))
+                failures.append(_skip(feed.label(), "%s while reading the feed" % type(error).__name__, url))
                 continue
 
-            ident = feed_id(url)
+            ident = feed.ident()
             self._parsed[ident] = (calendar, google_calendar_id(url))
             found.append(
                 {
                     "id": ident,
-                    "name": feed["name"]
+                    "name": feed.name
                     or _text(calendar, "X-WR-CALNAME")
                     or redact(url),
-                    "color": feed["color"]
+                    "color": feed.color
                     or _text(calendar, "X-APPLE-CALENDAR-COLOR")
                     or FEED_COLORS[position % len(FEED_COLORS)],
                 }

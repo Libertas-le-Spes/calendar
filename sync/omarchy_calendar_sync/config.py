@@ -6,11 +6,15 @@ with no file at all.
 
 import copy
 import json
+import os
+import stat
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import NamedTuple
 
 CONFIG_PATH = Path.home() / ".config" / "omarchy" / "calendar-sync.json"
+OTHERS_WRITE = stat.S_IWGRP | stat.S_IWOTH
+OTHERS_READ = stat.S_IRGRP | stat.S_IROTH
 MAX_WINDOW_DAYS = 366
 
 DEFAULTS = {
@@ -50,11 +54,17 @@ def load(path=None):
 
     try:
         raw = json.loads(path.read_text())
+        file_status = path.stat()
+        folder_status = path.parent.stat()
     except (OSError, json.JSONDecodeError) as error:
         raise ConfigError(f"cannot read {path}: {error}") from error
 
     if not isinstance(raw, dict):
         raise ConfigError(f"{path} must contain a JSON object")
+
+    problem = permission_problem(file_status, folder_status, holds_plain_feed_addresses(raw), os.getuid())
+    if problem:
+        raise ConfigError(f"{path} {problem}; run: chmod 600 {path}")
 
     merged = _merge(copy.deepcopy(DEFAULTS), raw)
 
@@ -68,6 +78,44 @@ def load(path=None):
         )
 
     return merged
+
+
+def permission_problem(file_status, folder_status, holds_secrets, user_id):
+    """Why the config cannot be trusted as it is stored, or blank.
+
+    It names a program the timer runs, so nobody else may own or change it,
+    or replace it through its folder; and while it holds a feed address,
+    which is a password, nobody else may read it either.
+    """
+    if file_status.st_uid != user_id:
+        return "belongs to another user"
+    if file_status.st_mode & OTHERS_WRITE:
+        return "can be changed by other users"
+    if folder_status.st_mode & OTHERS_WRITE:
+        return "is in a folder other users can change"
+    if holds_secrets and file_status.st_mode & OTHERS_READ:
+        return "holds feed addresses that other users can read"
+    return ""
+
+
+def holds_plain_feed_addresses(raw):
+    feeds = raw.get("ics")
+    if isinstance(feeds, (str, dict)):
+        feeds = [feeds]
+    if not isinstance(feeds, list):
+        return False
+    for feed in feeds:
+        if _is_plain_address(feed):
+            return True
+    return False
+
+
+def _is_plain_address(feed):
+    if isinstance(feed, str):
+        return bool(feed.strip())
+    if isinstance(feed, dict):
+        return bool(str(feed.get("url") or "").strip())
+    return False
 
 
 def _merge(defaults, override):

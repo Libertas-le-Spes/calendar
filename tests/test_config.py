@@ -1,4 +1,6 @@
 import json
+import os
+import stat
 import tempfile
 import unittest
 from datetime import date, datetime, timezone
@@ -120,9 +122,25 @@ class TestWindowBounds(unittest.TestCase):
         self.assertTrue(time_max.startswith("2026-08-12"))
 
 
-def load_text(text):
+def status(mode, owner=None):
+    if owner is None:
+        owner = os.getuid()
+    return os.stat_result((mode, 0, 0, 1, owner, 0, 0, 0, 0, 0))
+
+
+PRIVATE_FILE = status(stat.S_IFREG | 0o600)
+PRIVATE_FOLDER = status(stat.S_IFDIR | 0o700)
+
+
+def load_text(text, file_status=PRIVATE_FILE, folder_status=PRIVATE_FOLDER):
+    statuses = {"calendar-sync.json": file_status, ".": folder_status}
+
+    def fake_stat(path):
+        return statuses[str(path)]
+
     with mock.patch.object(config.Path, "exists", return_value=True), \
-            mock.patch.object(config.Path, "read_text", return_value=text):
+            mock.patch.object(config.Path, "read_text", return_value=text), \
+            mock.patch.object(config.Path, "stat", autospec=True, side_effect=fake_stat):
         return config.load(Path("calendar-sync.json"))
 
 
@@ -161,3 +179,41 @@ class TestGwsPath(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+FEEDS = json.dumps({"backend": "ics", "ics": ["https://feeds.example.invalid/private-made-up.ics"]})
+KEYRING_FEEDS = json.dumps({"backend": "ics", "ics": [{"secret": "ics-0123456789ab"}]})
+
+
+class TestConfigPermissions(unittest.TestCase):
+    def test_a_private_config_holding_feed_addresses_loads(self):
+        self.assertEqual(load_text(FEEDS)["backend"], "ics")
+
+    def test_a_config_another_user_owns_is_refused(self):
+        with self.assertRaises(config.ConfigError) as raised:
+            load_text("{}", file_status=status(stat.S_IFREG | 0o600, owner=os.getuid() + 1))
+        self.assertIn("another user", str(raised.exception))
+
+    def test_a_config_others_can_change_is_refused_even_without_secrets(self):
+        for mode in (0o620, 0o602):
+            with self.subTest(mode=oct(mode)):
+                with self.assertRaises(config.ConfigError):
+                    load_text("{}", file_status=status(stat.S_IFREG | mode))
+
+    def test_a_config_in_a_folder_others_can_change_is_refused(self):
+        with self.assertRaises(config.ConfigError) as raised:
+            load_text("{}", folder_status=status(stat.S_IFDIR | 0o777))
+        self.assertIn("folder", str(raised.exception))
+
+    def test_feed_addresses_others_can_read_are_refused(self):
+        for mode in (0o640, 0o604):
+            with self.subTest(mode=oct(mode)):
+                with self.assertRaises(config.ConfigError) as raised:
+                    load_text(FEEDS, file_status=status(stat.S_IFREG | mode))
+                self.assertIn("chmod 600", str(raised.exception))
+
+    def test_a_readable_config_without_feed_addresses_loads(self):
+        self.assertEqual(load_text("{}", file_status=status(stat.S_IFREG | 0o644))["backend"], "gws")
+
+    def test_feeds_kept_in_the_keyring_may_sit_in_a_readable_config(self):
+        self.assertEqual(load_text(KEYRING_FEEDS, file_status=status(stat.S_IFREG | 0o644))["backend"], "ics")
