@@ -150,6 +150,7 @@ Item {
       activeFocusOnTab: root.sections.allDay.length > 0 || root.sections.timed.length > 0
       Keys.onUpPressed: function(event) { root.step(event, -1) }
       Keys.onDownPressed: function(event) { root.step(event, 1) }
+      onActiveFocusChanged: if (activeFocus && root.selectedId === "") root.itemStepRequested(1)
     }
     anchors.left: parent.left
     anchors.right: parent.right

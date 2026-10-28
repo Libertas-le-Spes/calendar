@@ -102,7 +102,10 @@ Item {
     cursorShape: Qt.PointingHandCursor
     onClicked: root.homeRequested()
 
-    KeyPress { onActivated: root.homeRequested() }
+    KeyPress {
+      enabled: root.canGoHome
+      onActivated: root.homeRequested()
+    }
 
     PanelToolTip {
       visible: homeMouse.containsMouse
