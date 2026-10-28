@@ -453,7 +453,7 @@ Panel {
     }
     var tab = Keyboard.tabAction(event.key, event.modifiers, root.formOpen)
     if (tab !== "none") return root.handleTab(tab, Keyboard.tabStep(event.key, event.modifiers), event)
-    var focused = Window.activeFocusItem
+    var focused = keyWalker.focused
     if (root.takesText(focused)) return
     var item = Keyboard.itemStep(event.text, event.modifiers)
     if (item !== 0 && !root.formOpen) {
@@ -471,7 +471,7 @@ Panel {
   function handleTab(tab, step, event) {
     event.accepted = true
     if (tab === "switch") root.switchPanel(step)
-    if (tab === "walk") root.walkFocus(Window.activeFocusItem, step)
+    if (tab === "walk") root.walkFocus(keyWalker.focused, step)
   }
 
   function walksWithArrows(item) {
