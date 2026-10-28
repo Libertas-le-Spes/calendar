@@ -2,7 +2,7 @@ from datetime import date
 import unittest
 from zoneinfo import ZoneInfo
 
-from omarchy_calendar_sync import normalize
+from omarchy_calendar_sync import contract, normalize
 from omarchy_calendar_sync.config import DayWindow
 
 WIDE_WINDOW = DayWindow(date(2000, 1, 1), date(2100, 12, 31))
@@ -200,6 +200,32 @@ class TestWindow(unittest.TestCase):
     def test_an_event_wholly_outside_the_window_has_no_rows(self):
         event = timed("2026-11-02T09:00:00-05:00", "2026-11-02T10:00:00-05:00")
         self.assertEqual(normalize.normalize_event(event, CAL, BOGOTA, self.OCTOBER), [])
+
+
+class TestLengths(unittest.TestCase):
+    def test_a_title_over_its_limit_is_cut_to_the_limit_with_an_ellipsis(self):
+        limit = contract.FIELD_LENGTHS["title"]
+        event = timed("2026-08-10T09:00:00-05:00", "2026-08-10T10:00:00-05:00", summary="x" * (limit + 5))
+        title = normalize.normalize_event(event, CAL, BOGOTA, WIDE_WINDOW)[0]["title"]
+        self.assertEqual(len(title), limit)
+        self.assertTrue(title.endswith("…"))
+
+    def test_a_location_at_its_limit_is_kept_whole(self):
+        limit = contract.FIELD_LENGTHS["location"]
+        event = timed("2026-08-10T09:00:00-05:00", "2026-08-10T10:00:00-05:00", location="x" * limit)
+        self.assertEqual(normalize.normalize_event(event, CAL, BOGOTA, WIDE_WINDOW)[0]["location"], "x" * limit)
+
+    def test_a_calendar_name_over_its_limit_is_cut(self):
+        limit = contract.FIELD_LENGTHS["calendarName"]
+        calendar = dict(CAL, name="x" * (limit + 1))
+        event = timed("2026-08-10T09:00:00-05:00", "2026-08-10T10:00:00-05:00")
+        self.assertEqual(len(normalize.normalize_event(event, calendar, BOGOTA, WIDE_WINDOW)[0]["calendarName"]), limit)
+
+    def test_a_meeting_link_over_its_limit_is_dropped_rather_than_cut(self):
+        limit = contract.FIELD_LENGTHS["meetingUrl"]
+        link = "https://meet.example.invalid/" + "x" * limit
+        event = timed("2026-08-10T09:00:00-05:00", "2026-08-10T10:00:00-05:00", hangoutLink=link)
+        self.assertEqual(normalize.normalize_event(event, CAL, BOGOTA, WIDE_WINDOW)[0]["meetingUrl"], "")
 
 
 class TestNormalizeAll(unittest.TestCase):

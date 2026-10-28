@@ -25,7 +25,8 @@ import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
 
-from .errors import SyncError, TooManyEvents
+from .contract import CALENDAR_COLORS
+from .errors import CalendarUnreadable, SyncError, TooManyEvents
 from .feed_expansion import affordable_calendar, occurrences_in_window
 from .limits import FEED_BYTES
 from .localzone import resolve_local_timezone
@@ -34,7 +35,7 @@ from .resources import build_event
 FETCH_TIMEOUT = 30
 # A feed carries no colour of its own, so each one takes the next of
 # Google's calendar colours, keeping two feeds apart on the grid.
-FEED_COLORS = ("#4285f4", "#f6bf26", "#33b679", "#e67c73", "#8e24aa", "#f4511e", "#039be5", "#7986cb")
+FEED_COLORS = CALENDAR_COLORS
 USER_AGENT = "omarchy-calendar-sync"
 
 
@@ -367,7 +368,7 @@ class Ics:
         except TooManyEvents:
             raise
         except Exception as error:
-            raise IcsError("cannot expand %s: %s" % (calendar_id, error))
+            raise CalendarUnreadable("its events cannot be expanded (%s)" % type(error).__name__)
 
         events = []
         for component in occurrences:

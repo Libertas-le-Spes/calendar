@@ -1,7 +1,6 @@
 """Entry point. Orchestrates config, a backend, normalization, and the write."""
 
 import argparse
-import json
 import os
 import sys
 import tempfile
@@ -11,7 +10,7 @@ from pathlib import Path
 from . import config as config_module
 from . import contract, normalize, suggestions
 from .eds import Eds
-from .errors import SyncError, TooManyEvents
+from .errors import CalendarUnreadable, SyncError
 from .gws import Gws
 from .ics import Ics
 from .localzone import resolve_local_timezone
@@ -21,16 +20,15 @@ EXIT_SYNC_FAILED = 1
 EXIT_BAD_CONFIG = 2
 
 
-def write_atomic(path, doc):
-    """Write JSON so a reader never observes a partial file."""
+def write_atomic(path, text):
+    """Write a serialized document so a reader never observes a partial file."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
     handle, temp_name = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
     try:
         with os.fdopen(handle, "w") as stream:
-            json.dump(doc, stream, ensure_ascii=False, indent=2)
-            stream.write("\n")
+            stream.write(text)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temp_name, path)
@@ -82,12 +80,28 @@ def _drop_duplicates(gevents, seen):
     return fresh
 
 
+def _give_usable_colors(calendars):
+    for position, calendar in enumerate(calendars):
+        calendar["color"] = contract.usable_color(calendar.get("color"), position)
+
+
+def _sound_rows(rows, calendar):
+    sound = []
+    for row in rows:
+        if not contract.event_problems(row):
+            sound.append(row)
+    dropped = len(rows) - len(sound)
+    if dropped:
+        print(f"dropping {dropped} rows from calendar {calendar['name']!r}: they break the contract", file=sys.stderr)
+    return sound
+
+
 def _events_or_skip(client, calendar, time_min, time_max):
     try:
         return client.events(calendar["id"], time_min, time_max)
-    except TooManyEvents as error:
+    except CalendarUnreadable as error:
         print(f"skipping calendar {calendar['name']!r}: {error}", file=sys.stderr)
-        return []
+        return None
 
 
 def run(client, cfg, now, out_path, local_tz):
@@ -100,17 +114,25 @@ def run(client, cfg, now, out_path, local_tz):
         # as free/busy has no titles), so the primary calendar wins the
         # dedup. The sort is stable, so the rest keep their name order.
         calendars.sort(key=lambda calendar: not calendar.get("primary"))
+        _give_usable_colors(calendars)
         time_min, time_max = config_module.window_bounds(cfg, now)
         window = config_module.local_days_in_window(cfg, now, local_tz)
 
         rows = []
         seen = set()
         fetched = []
+        skipped = 0
         for calendar in calendars:
             raw = _events_or_skip(client, calendar, time_min, time_max)
+            if raw is None:
+                skipped += 1
+                continue
             fresh = _drop_duplicates(raw, seen)
             fetched.extend(fresh)
-            rows.extend(normalize.normalize_all(fresh, calendar, local_tz, window))
+            rows.extend(_sound_rows(normalize.normalize_all(fresh, calendar, local_tz, window), calendar))
+
+        if calendars and skipped == len(calendars):
+            raise SyncError("every calendar was skipped")
 
         source = client.SOURCE_NAME + "/" + ".".join(
             str(part) for part in client.version()
@@ -138,15 +160,24 @@ def run(client, cfg, now, out_path, local_tz):
         guests = suggestions.guest_suggestions(fetched, [c["id"] for c in calendars])
     doc = contract.build_document(rows, now.isoformat(), source, writable, guests)
 
+    text = contract.serialize(doc)
     problems = contract.validate(doc)
+    problems.extend(_size_problems(text))
     if problems:
         for problem in problems:
             print(f"refusing to write invalid document: {problem}", file=sys.stderr)
         return EXIT_SYNC_FAILED
 
-    write_atomic(out_path, doc)
+    write_atomic(out_path, text)
     print(f"wrote {len(rows)} rows from {len(calendars)} calendars to {out_path}")
     return EXIT_OK
+
+
+def _size_problems(text):
+    problem = contract.size_problem(text)
+    if problem:
+        return [problem]
+    return []
 
 
 def build_client(cfg, local_tz=None):

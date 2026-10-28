@@ -5,10 +5,12 @@ import base64
 import contextlib
 import io
 import unittest
+from unittest import mock
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from omarchy_calendar_sync import cli, config, ics, normalize
+from omarchy_calendar_sync.errors import CalendarUnreadable
 from omarchy_calendar_sync.config import DayWindow
 
 WIDE_WINDOW = DayWindow(date(2000, 1, 1), date(2100, 12, 31))
@@ -346,3 +348,14 @@ class TestFeedSize(unittest.TestCase):
             calendars = client(fetch=fetch, feeds=[big, good]).calendars()
         self.assertEqual(len(calendars), 1)
         self.assertEqual(calendars[0]["id"], ics.feed_id(good))
+
+
+class TestExpansionFailure(unittest.TestCase):
+    def test_a_feed_that_cannot_be_expanded_is_unreadable_on_its_own_without_quoting_the_error(self):
+        c = client()
+        calendars = c.calendars()
+        failure = ValueError("private-SECRETMADEUP in the message")
+        with mock.patch.object(ics, "occurrences_in_window", side_effect=failure):
+            with self.assertRaises(CalendarUnreadable) as raised:
+                c.events(calendars[0]["id"], "2026-10-01T00:00:00+00:00", "2026-10-31T00:00:00+00:00")
+        self.assertNotIn("SECRETMADEUP", str(raised.exception))

@@ -148,3 +148,92 @@ class TestHttpsUrl(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+LINK_FIELDS = ("meetingUrl", "eventUrl")
+
+
+def sound_row(**changes):
+    row = {
+        "id": "made-up-1",
+        "calendarId": "made-up@example.invalid",
+        "calendarName": "Made-up",
+        "color": "#4285f4",
+        "dateKey": "2026-10-21",
+        "start": "2026-10-21T09:00:00+00:00",
+        "end": "2026-10-21T10:00:00+00:00",
+        "allDay": False,
+        "title": "Made-up meeting",
+        "location": "",
+    }
+    row.update(changes)
+    return row
+
+
+def document_with(rows):
+    return contract.build_document(rows, "2026-10-21T08:00:00+00:00", "made-up/1")
+
+
+class TestCeilings(unittest.TestCase):
+    def test_a_document_at_the_row_ceiling_is_valid(self):
+        rows = [sound_row()] * contract.MAX_EVENT_ROWS
+        self.assertEqual(contract.validate(document_with(rows)), [])
+
+    def test_a_document_one_row_over_the_ceiling_is_refused(self):
+        rows = [sound_row()] * (contract.MAX_EVENT_ROWS + 1)
+        self.assertEqual(len(contract.validate(document_with(rows))), 1)
+
+    def test_every_capped_text_field_at_its_limit_is_sound(self):
+        for field, limit in contract.FIELD_LENGTHS.items():
+            if field in LINK_FIELDS:
+                continue
+            with self.subTest(field=field):
+                self.assertEqual(contract.event_problems(sound_row(**{field: "x" * limit})), [])
+
+    def test_every_link_at_its_limit_is_sound(self):
+        for field in LINK_FIELDS:
+            limit = contract.FIELD_LENGTHS[field]
+            with self.subTest(field=field):
+                link = "https://" + "x" * (limit - len("https://"))
+                self.assertEqual(contract.event_problems(sound_row(**{field: link})), [])
+
+    def test_every_capped_field_one_character_over_its_limit_is_a_problem(self):
+        for field, limit in contract.FIELD_LENGTHS.items():
+            with self.subTest(field=field):
+                problems = contract.event_problems(sound_row(**{field: "x" * (limit + 1)}))
+                self.assertIn(f"events[0].{field} is longer than {limit} characters", problems)
+
+    def test_a_sound_row_has_no_problems(self):
+        self.assertEqual(contract.event_problems(sound_row()), [])
+
+
+class TestDocumentSize(unittest.TestCase):
+    def test_a_document_at_the_size_ceiling_is_fine(self):
+        self.assertEqual(contract.size_problem("x" * contract.MAX_DOCUMENT_BYTES), "")
+
+    def test_a_document_one_byte_over_the_size_ceiling_is_a_problem(self):
+        self.assertNotEqual(contract.size_problem("x" * (contract.MAX_DOCUMENT_BYTES + 1)), "")
+
+    def test_the_size_counts_bytes_not_characters(self):
+        self.assertNotEqual(contract.size_problem("é" * (contract.MAX_DOCUMENT_BYTES // 2 + 1)), "")
+
+    def test_serialize_ends_with_a_newline_and_reads_back(self):
+        doc = document_with([sound_row()])
+        text = contract.serialize(doc)
+        self.assertTrue(text.endswith("\n"))
+        self.assertEqual(json.loads(text), doc)
+
+
+class TestUsableColor(unittest.TestCase):
+    def test_a_contract_color_is_kept(self):
+        self.assertEqual(contract.usable_color("#a1b2c3", 0), "#a1b2c3")
+
+    def test_a_color_with_alpha_takes_the_palette_color_for_its_position(self):
+        self.assertEqual(contract.usable_color("#a1b2c3ff", 1), contract.CALENDAR_COLORS[1])
+
+    def test_a_missing_color_takes_the_palette_color_for_its_position(self):
+        self.assertEqual(contract.usable_color(None, 0), contract.CALENDAR_COLORS[0])
+
+    def test_positions_past_the_palette_wrap_around(self):
+        position = len(contract.CALENDAR_COLORS) + 2
+        self.assertEqual(contract.usable_color("red", position), contract.CALENDAR_COLORS[2])

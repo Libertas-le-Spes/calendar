@@ -8,7 +8,7 @@ testable without freezing time.
 import re
 from datetime import date, datetime, time, timedelta
 
-from .contract import is_https_url
+from .contract import FIELD_LENGTHS, is_https_url
 from .plaintext import description_text
 
 NO_TITLE = "(no title)"
@@ -21,6 +21,8 @@ def _https_only(value):
     anything else is dropped rather than handed to the widget.
     """
     text = str(value or "").strip()
+    if len(text) > FIELD_LENGTHS["meetingUrl"]:
+        return ""
     return text if is_https_url(text) else ""
 
 
@@ -152,8 +154,8 @@ def normalize_event(gevent, calendar, tz, window):
     if not all_day and end_dt < start_dt:
         return []
 
-    title = (gevent.get("summary") or "").strip() or NO_TITLE
-    location = gevent.get("location") or ""
+    title = _clipped((gevent.get("summary") or "").strip() or NO_TITLE, "title")
+    location = _clipped(gevent.get("location") or "", "location")
     start_iso = start_dt.isoformat()
     end_iso = end_dt.isoformat()
 
@@ -168,7 +170,7 @@ def normalize_event(gevent, calendar, tz, window):
         {
             "id": gevent.get("id", ""),
             "calendarId": calendar["id"],
-            "calendarName": calendar["name"],
+            "calendarName": _clipped(calendar["name"], "calendarName"),
             "color": calendar["color"],
             "dateKey": day.isoformat(),
             "start": start_iso,
@@ -185,6 +187,13 @@ def normalize_event(gevent, calendar, tz, window):
         }
         for day in _covered_days(start_dt, end_dt, all_day, window)
     ]
+
+
+def _clipped(text, field):
+    limit = FIELD_LENGTHS[field]
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
 
 
 def _parse_endpoint(node, tz):

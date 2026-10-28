@@ -5,8 +5,11 @@ This module is the single source of truth for the shape of
 import it, so the schema can never drift between them.
 """
 
+import json
 import re
 from pathlib import Path
+
+from .plaintext import DESCRIPTION_LIMIT
 
 CONTRACT_VERSION = 1
 CONTRACT_PATH = Path.home() / ".local" / "state" / "omarchy" / "calendar-events.json"
@@ -38,6 +41,24 @@ OPTIONAL_EVENT_FIELDS = (
 )
 _OPTIONAL_STRING_FIELDS = tuple(f for f in OPTIONAL_EVENT_FIELDS if f != "reminders")
 
+MAX_EVENT_ROWS = 8000
+MAX_DOCUMENT_BYTES = 16 * 1024 * 1024
+
+FIELD_LENGTHS = {
+    "id": 1024,
+    "calendarId": 1024,
+    "calendarName": 200,
+    "start": 64,
+    "end": 64,
+    "title": 500,
+    "location": 500,
+    "meetingUrl": 2048,
+    "eventUrl": 2048,
+    "eventType": 64,
+    "responseStatus": 64,
+    "description": DESCRIPTION_LIMIT,
+}
+
 _DATE_KEY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -46,6 +67,16 @@ _COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 # match Model.safeUrl exactly: when the widget is stricter than the sync, a
 # URL is written, then silently refused, and there is no button and no error.
 _HTTPS_URL = re.compile(r"^https://[^\s\"'<>]+$")
+
+
+CALENDAR_COLORS = ("#4285f4", "#f6bf26", "#33b679", "#e67c73", "#8e24aa", "#f4511e", "#039be5", "#7986cb")
+
+
+def usable_color(color, position):
+    """`color` when it follows the contract, else a stand-in that keeps calendars apart."""
+    if isinstance(color, str) and _COLOR.match(color):
+        return color
+    return CALENDAR_COLORS[position % len(CALENDAR_COLORS)]
 
 
 def is_https_url(text):
@@ -92,6 +123,9 @@ def validate(doc):
     if not isinstance(events, list):
         problems.append("events must be a list")
         return problems
+    if len(events) > MAX_EVENT_ROWS:
+        problems.append(f"events holds {len(events)} rows, more than {MAX_EVENT_ROWS}")
+        return problems
 
     if "writableCalendars" in doc:
         problems.extend(_validate_writable(doc["writableCalendars"]))
@@ -102,6 +136,23 @@ def validate(doc):
         problems.extend(_validate_event(index, event))
 
     return problems
+
+
+def event_problems(event):
+    """Why one row breaks the contract, or an empty list when it is sound."""
+    return _validate_event(0, event)
+
+
+def serialize(doc):
+    return json.dumps(doc, ensure_ascii=False, indent=2) + "\n"
+
+
+def size_problem(text):
+    """Why a serialized document is too large for the widget, or blank."""
+    size = len(text.encode("utf-8"))
+    if size > MAX_DOCUMENT_BYTES:
+        return f"the document is {size} bytes, more than {MAX_DOCUMENT_BYTES}"
+    return ""
 
 
 def _validate_suggestions(suggestions):
@@ -173,6 +224,16 @@ def _validate_event(index, event):
     if "reminders" in event and not _is_minutes_list(event["reminders"]):
         problems.append(f"{where}.reminders must be a list of non-negative integers when present")
 
+    problems.extend(_length_problems(where, event))
+    return problems
+
+
+def _length_problems(where, event):
+    problems = []
+    for field, limit in FIELD_LENGTHS.items():
+        value = event.get(field)
+        if isinstance(value, str) and len(value) > limit:
+            problems.append(f"{where}.{field} is longer than {limit} characters")
     return problems
 
 

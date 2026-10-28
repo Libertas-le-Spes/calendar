@@ -9,5 +9,9 @@ class SyncError(Exception):
     """A calendar source could not be read."""
 
 
-class TooManyEvents(SyncError):
+class CalendarUnreadable(SyncError):
+    """One calendar could not be read, while the others still can."""
+
+
+class TooManyEvents(CalendarUnreadable):
     """One calendar holds more events in the window than the sync takes."""
