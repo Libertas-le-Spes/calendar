@@ -44,5 +44,8 @@ Rectangle {
     onClicked: root.toggled()
   }
 
-  KeyPress { onActivated: root.toggled() }
+  KeyPress {
+    ringOutset: 0
+    onActivated: root.toggled()
+  }
 }

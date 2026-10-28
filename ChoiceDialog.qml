@@ -25,7 +25,12 @@ Item {
   visible: opened
   onOpenedChanged: if (opened) Qt.callLater(firstButton.forceActiveFocus)
 
-  readonly property var buttons: [firstButton, secondButton, cancelButton]
+  readonly property var buttons: [cancelButton, secondButton, firstButton]
+
+  Keys.onEscapePressed: function(event) {
+    root.canceled()
+    event.accepted = true
+  }
 
   Keys.onPressed: function(event) {
     var step = Keyboard.arrowStep(event.key)

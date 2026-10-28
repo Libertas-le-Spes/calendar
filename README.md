@@ -418,11 +418,11 @@ With the panel open:
 
 | Key | Does |
 |---|---|
-| `←` `→` / `↑` `↓` | Previous / next day, previous / next week |
+| `←` `→` / `↑` `↓` | Previous / next day, previous / next week, when no button has the ring |
 | `[` `]` | Previous / next month (`{` `}` for years) |
 | `t` | Today |
 | `j` `k` | Next / previous item of the selected day |
-| `Enter` | Show or hide the selected item's details |
+| `Enter` | Show or hide the selected item's details, when no button has the ring |
 | `n` | Quick add |
 | `e` | Edit the selected event |
 | `m` | Join the selected meeting, else the next one |
@@ -430,8 +430,8 @@ With the panel open:
 | `w` | Toggle the week start |
 | `Tab` `Shift+Tab` | Next / previous button, field or switch; a ring shows which |
 | `Enter` `Space` | Press the button that has the ring |
-| `←` `→` / `↑` `↓` on a button | Next / previous button, like Tab. On the month grid they move the day, and on the agenda list `↑` `↓` step through the day's events |
-| `Ctrl+Tab` `Ctrl+Shift+Tab` | Next / previous bar panel, except while the event form is open |
+| `←` `→` / `↑` `↓` on a button | Next / previous button, like Tab. On the month grid they move the day; on the agenda list `↑` `↓` step through the day's events and `←` `→` move to the previous / next day. A dropdown opens on `↓` |
+| `Ctrl+Tab` `Ctrl+Shift+Tab` | Next / previous bar panel, except while the event form is open; there, Tab stays in the form |
 | `Esc` | Back out one step: dialog, form, details, selection, then the panel |
 
 To open the panel from the keyboard, bind a key to

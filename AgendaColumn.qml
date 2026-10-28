@@ -3,6 +3,7 @@ import qs.Commons
 import qs.Ui
 
 import "Strings.js" as Strings
+import "Keyboard.js" as Keyboard
 
 // The middle column: quick add and the next-up card at the top, then the
 // selected day (all-day items, timed events, the days after it) scrolling
@@ -56,6 +57,7 @@ Item {
 
   signal itemSelected(var item)
   signal itemStepRequested(int direction)
+  signal dayStepRequested(int direction)
   signal joinRequested(var item)
   signal snoozeRequested(var item)
   signal daySelected(string key)
@@ -73,6 +75,22 @@ Item {
 
   function tr(key, args) {
     return Strings.tr(root.language, key, args)
+  }
+
+  function stepDay(event, direction) {
+    root.dayStepRequested(direction)
+    Qt.callLater(root.selectFirstWhenFocused)
+    event.accepted = true
+  }
+
+  function selectFirstWhenFocused() {
+    if (itemKeys.activeFocus && root.selectedId === "") root.itemStepRequested(1)
+  }
+
+  function showRow(row) {
+    var spot = row.mapToItem(scroll.contentItem, 0, 0)
+    scroll.contentY = Keyboard.scrollToShow(scroll.contentY, scroll.height, scroll.contentHeight,
+      spot.y, row.height, Style.space(8))
   }
 
   function step(event, direction) {
@@ -150,6 +168,8 @@ Item {
       activeFocusOnTab: root.sections.allDay.length > 0 || root.sections.timed.length > 0
       Keys.onUpPressed: function(event) { root.step(event, -1) }
       Keys.onDownPressed: function(event) { root.step(event, 1) }
+      Keys.onLeftPressed: function(event) { root.stepDay(event, -1) }
+      Keys.onRightPressed: function(event) { root.stepDay(event, 1) }
       onActiveFocusChanged: if (activeFocus && root.selectedId === "") root.itemStepRequested(1)
     }
     anchors.left: parent.left
@@ -256,6 +276,7 @@ Item {
             item: modelData
             selected: modelData.id === root.selectedId
             listFocused: itemKeys.activeFocus
+            onKeyedChanged: if (keyed) root.showRow(this)
             snoozable: selected && root.selectedSnoozable
             snoozeText: root.snoozeText
             foreground: root.foreground
@@ -299,6 +320,7 @@ Item {
               item: timedEntry.modelData
               selected: timedEntry.modelData.id === root.selectedId
               listFocused: itemKeys.activeFocus
+              onKeyedChanged: if (keyed) root.showRow(this)
               snoozable: selected && root.selectedSnoozable
               snoozeText: root.snoozeText
               isToday: root.isToday

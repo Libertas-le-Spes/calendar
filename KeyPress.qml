@@ -1,9 +1,12 @@
 import QtQuick
+import qs.Commons
 
 Item {
   id: root
 
   signal activated()
+
+  property int ringOutset: Style.space(3)
 
   anchors.fill: parent
   activeFocusOnTab: enabled && visible
@@ -17,5 +20,8 @@ Item {
     event.accepted = true
   }
 
-  FocusRing { target: root }
+  FocusRing {
+    target: root
+    outset: root.ringOutset
+  }
 }

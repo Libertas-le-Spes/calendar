@@ -30,6 +30,7 @@ Column {
   property bool busy: false
 
   signal submitted(var form)
+  signal walkRequested(int step)
   signal canceled()
 
   property var form: ({})
@@ -342,6 +343,9 @@ Column {
       font.pixelSize: Style.font.body
       onTextChanged: if (activeFocus) root.update({ description: text })
       Keys.onEscapePressed: function(event) { root.canceled(); event.accepted = true }
+      activeFocusOnTab: true
+      Keys.onTabPressed: function(event) { root.walkRequested(1); event.accepted = true }
+      Keys.onBacktabPressed: function(event) { root.walkRequested(-1); event.accepted = true }
 
       Text {
         textFormat: Text.PlainText

@@ -437,76 +437,17 @@ Panel {
   }
 
   function takesText(item) {
-    return !!item && item !== keyFocus && "cursorPosition" in item && !item.readOnly
+    return !!item && item !== keyWalker.keyTarget && "cursorPosition" in item && !item.readOnly
   }
 
-  onPendingDeleteChanged: if (root.pendingDelete !== null) root.focusKeys()
+  onPendingDeleteChanged: {
+    if (root.pendingDelete === null) return
+    confirmDialog.selectedIndex = 0
+    root.focusKeys()
+  }
 
   function focusKeys() {
-    Qt.callLater(function() { keyFocus.forceActiveFocus() })
-  }
-
-  function walkKey(event) {
-    if (confirmDialog.handleKey(event)) {
-      event.accepted = true
-      return
-    }
-    var tab = Keyboard.tabAction(event.key, event.modifiers, root.formOpen)
-    if (tab !== "none") return root.handleTab(tab, Keyboard.tabStep(event.key, event.modifiers), event)
-    var focused = keyWalker.focused
-    if (root.takesText(focused)) return
-    var item = Keyboard.itemStep(event.text, event.modifiers)
-    if (item !== 0 && !root.formOpen) {
-      root.stepItem(item)
-      event.accepted = true
-      return
-    }
-    var arrow = Keyboard.arrowStep(event.key)
-    if (arrow !== 0 && root.walksWithArrows(focused)) {
-      root.walkFocus(focused, arrow)
-      event.accepted = true
-    }
-  }
-
-  function handleTab(tab, step, event) {
-    event.accepted = true
-    if (tab === "switch") root.switchPanel(step)
-    if (tab === "walk") root.walkFocus(keyWalker.focused, step)
-  }
-
-  function walksWithArrows(item) {
-    return item !== null && item !== keyFocus && item.ownsArrows !== true
-  }
-
-  function walkFocus(from, step) {
-    var start = from
-    if (!start) start = keyFocus
-    var next = start.nextItemInFocusChain(step > 0)
-    if (next) next.forceActiveFocus(Qt.TabFocusReason)
-  }
-
-  function ensureVisible(item) {
-    var scroller = root.scrollerOf(item)
-    if (!scroller) return
-    var spot = item.mapToItem(scroller.contentItem, 0, 0)
-    scroller.contentY = Keyboard.scrollToShow(scroller.contentY, scroller.height, scroller.contentHeight,
-      spot.y, item.height, Style.space(8))
-  }
-
-  function scrollerOf(item) {
-    var cursor = item
-    while (cursor) {
-      var parentItem = cursor.parent
-      if (parentItem && parentItem.parent && parentItem.parent.contentItem === parentItem) return parentItem.parent
-      cursor = parentItem
-    }
-    return null
-  }
-
-  function keepKeysInside(item) {
-    if (!root.opened) return
-    if (item !== null && item !== keyWalker.Window.contentItem) return
-    root.focusKeys()
+    keyWalker.focusKeys()
   }
 
   // ---- Navigation.
@@ -573,9 +514,6 @@ Panel {
   // Escape backs out one layer at a time; the panel closes last.
   function backOut() {
     if (root.choiceMessage !== "") root.answerChoice(null)
-    // ConfirmDialog takes no keys, so Escape is how a pending delete is
-    // dropped from the keyboard.
-    else if (root.pendingDelete !== null) root.pendingDelete = null
     else if (root.formOpen) root.closeForm()
     else if (root.detailsOpen && root.selectedItem) root.detailsOpen = false
     else if (root.selectedEventId !== "") root.selectedEventId = ""
@@ -957,7 +895,7 @@ Panel {
     bar: root.bar
     open: root.opened
     centerOnBar: true
-    focusTarget: keyFocus
+    focusTarget: keyWalker.keyTarget
     contentWidth: panel.fittedContentWidth(columns.width + panel.padding * 2
       + Border.left(panel.borderSpec) + Border.right(panel.borderSpec))
     // The calendar column sets the height: the agenda and the details
@@ -980,20 +918,16 @@ Panel {
       onCloseRequested: root.backOut()
       onTextKey: function(t) { if (!root.formOpen) root.handleTextKey(t) }
 
-      Item {
+      FocusWalker {
         id: keyWalker
         anchors.fill: parent
-        readonly property Item focused: Window.activeFocusItem
-        onFocusedChanged: {
-          root.keepKeysInside(focused)
-          root.ensureVisible(focused)
-        }
-        Keys.onPressed: function(event) { root.walkKey(event) }
-
-        Item {
-          id: keyFocus
-          focus: true
-        }
+        opened: root.opened
+        formOpen: root.formOpen
+        formArea: inspectorColumn
+        confirmDialog: confirmDialog
+        takesText: root.takesText
+        onSwitchPanelRequested: function(step) { root.switchPanel(step) }
+        onItemStepRequested: function(step) { root.stepItem(step) }
 
         // Wider than the screen allows, the columns scroll sideways rather
         // than lose the inspector off the edge.
@@ -1162,6 +1096,7 @@ Panel {
               AgendaColumn {
                 id: agenda
                 onItemStepRequested: function(direction) { root.stepItem(direction) }
+                onDayStepRequested: function(direction) { root.moveSelectedDay(direction) }
                 // One agenda, moved between its two places, so a half-typed
                 // quick add survives a change of layout.
                 parent: root.agendaBelow ? agendaBelowSlot : agendaBesideSlot
@@ -1219,6 +1154,7 @@ Panel {
             // ---- Right: the inspector. While the form is open, its title and
             //      actions stay pinned on top and only the fields scroll.
             Item {
+              id: inspectorColumn
               visible: root.inspectorOpen
               // Room on the right for the scroll thumb, off the buttons.
               width: visible ? root.inspectorWidth + root.columnPadding + Style.space(10) : 0
@@ -1301,6 +1237,7 @@ Panel {
 
                     sourceComponent: EventForm {
                       width: inspectorContent.width
+                      onWalkRequested: function(step) { keyWalker.walk(step) }
                       foreground: root.contentForeground
                       fontFamily: root.contentFontFamily
                       language: root.language

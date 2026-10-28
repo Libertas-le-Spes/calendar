@@ -183,7 +183,10 @@ Item {
           onClicked: root.section = navItem.modelData.id
         }
 
-        KeyPress { onActivated: root.section = navItem.modelData.id }
+        KeyPress {
+            ringOutset: 0
+            onActivated: root.section = navItem.modelData.id
+          }
       }
     }
   }

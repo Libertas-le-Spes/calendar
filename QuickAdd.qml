@@ -159,7 +159,6 @@ Rectangle {
 
         KeyPress {
           id: helpKeys
-          onActivated: helpKeys.forceActiveFocus()
         }
 
         PanelToolTip {

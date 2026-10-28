@@ -62,3 +62,57 @@ test('scrolling never passes the top or the end of the content', () => {
   assert.equal(Keyboard.scrollToShow(100, 300, 1000, 2, 20, 8), 0)
   assert.equal(Keyboard.scrollToShow(100, 300, 1000, 990, 20, 8), 700)
 })
+
+const QUIET = { dialogOpen: false, formOpen: false, inText: false, onButton: false }
+
+function stateWith(changes) {
+  return Object.assign({}, QUIET, changes)
+}
+
+test('the key numbers are the ones Qt sends', () => {
+  assert.equal(Keyboard.KEY_TAB, 16777217)
+  assert.equal(Keyboard.KEY_BACKTAB, 16777218)
+  assert.equal(Keyboard.KEY_RETURN, 16777220)
+  assert.equal(Keyboard.KEY_LEFT, 16777234)
+  assert.equal(Keyboard.KEY_UP, 16777235)
+  assert.equal(Keyboard.KEY_RIGHT, 16777236)
+  assert.equal(Keyboard.KEY_DOWN, 16777237)
+  assert.equal(Keyboard.KEY_SPACE, 32)
+  assert.equal(Keyboard.SHIFT, 33554432)
+  assert.equal(Keyboard.CONTROL, 67108864)
+})
+
+test('while the delete confirmation is open every key goes to it', () => {
+  for (const [key, text] of [[Keyboard.KEY_TAB, ''], [0x4e, 'n'], [Keyboard.KEY_SPACE, ' '], [Keyboard.KEY_DOWN, '']]) {
+    assert.equal(Keyboard.keyAction(key, 0, text, stateWith({ dialogOpen: true })).action, 'dialog')
+  }
+})
+
+test('Tab walks even from inside a text field', () => {
+  assert.deepEqual(Keyboard.keyAction(Keyboard.KEY_TAB, 0, '', stateWith({ inText: true })), { action: 'walk', step: 1 })
+})
+
+test('a text field keeps every other key', () => {
+  assert.equal(Keyboard.keyAction(Keyboard.KEY_LEFT, 0, '', stateWith({ inText: true, onButton: true })).action, 'none')
+  assert.equal(Keyboard.keyAction(0x4a, 0, 'j', stateWith({ inText: true })).action, 'none')
+})
+
+test('j and k step through the day when no form is open', () => {
+  assert.deepEqual(Keyboard.keyAction(0x4a, 0, 'j', QUIET), { action: 'step-item', step: 1 })
+  assert.equal(Keyboard.keyAction(0x4a, 0, 'j', stateWith({ formOpen: true })).action, 'none')
+})
+
+test('the arrows walk from a button and are left to the panel otherwise', () => {
+  assert.deepEqual(Keyboard.keyAction(Keyboard.KEY_RIGHT, 0, '', stateWith({ onButton: true })), { action: 'walk', step: 1 })
+  assert.equal(Keyboard.keyAction(Keyboard.KEY_RIGHT, 0, '', QUIET).action, 'none')
+})
+
+test('Ctrl+Tab switches panels, and stays put while the form is open', () => {
+  assert.equal(Keyboard.keyAction(Keyboard.KEY_TAB, Keyboard.CONTROL, '', QUIET).action, 'switch')
+  assert.equal(Keyboard.keyAction(Keyboard.KEY_TAB, Keyboard.CONTROL, '', stateWith({ formOpen: true })).action, 'stay')
+})
+
+test('Space in the delete confirmation answers like Enter', () => {
+  assert.deepEqual(Keyboard.dialogKey(Keyboard.KEY_SPACE), { key: Keyboard.KEY_RETURN })
+  assert.deepEqual(Keyboard.dialogKey(Keyboard.KEY_LEFT), { key: Keyboard.KEY_LEFT })
+})

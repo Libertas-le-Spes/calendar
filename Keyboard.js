@@ -51,3 +51,23 @@ function scrollToShow(contentY, viewHeight, contentHeight, itemTop, itemHeight, 
   var furthest = Math.max(0, contentHeight - viewHeight)
   return Math.max(0, Math.min(wanted, furthest))
 }
+
+var KEY_SPACE = 0x20
+var KEY_RETURN = 0x01000004
+
+function keyAction(key, modifiers, text, state) {
+  if (state.dialogOpen) return { action: "dialog", step: 0 }
+  var tab = tabAction(key, modifiers, state.formOpen)
+  if (tab !== "none") return { action: tab, step: tabStep(key, modifiers) }
+  if (state.inText) return { action: "none", step: 0 }
+  var item = itemStep(text, modifiers)
+  if (item !== 0 && !state.formOpen) return { action: "step-item", step: item }
+  var arrow = arrowStep(key)
+  if (arrow !== 0 && state.onButton) return { action: "walk", step: arrow }
+  return { action: "none", step: 0 }
+}
+
+function dialogKey(key) {
+  if (key === KEY_SPACE) return { key: KEY_RETURN }
+  return { key: key }
+}

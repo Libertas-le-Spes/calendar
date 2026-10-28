@@ -163,6 +163,7 @@ Column {
               id: dayCell
               required property var modelData
               readonly property bool selected: modelData.key === root.selectedDayKey
+              z: selected ? 1 : 0
 
               width: root.cellWidth
               height: root.cellHeight
