@@ -1103,6 +1103,13 @@ function notificationArg(value) {
   return /^-/.test(s) ? "\u2060" + s : s
 }
 
+function guestLabel(suggestion) {
+  var email = text(suggestion && suggestion.email)
+  var name = text(suggestion && suggestion.name).trim()
+  if (!name) return email
+  return email + "  (" + name + ")"
+}
+
 // ---- Layout: which blocks the panel shows
 
 // The agenda sits in its own column beside the calendar, or under it in one

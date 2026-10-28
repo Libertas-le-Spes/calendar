@@ -115,7 +115,7 @@ Column {
         anchors.verticalCenter: parent.verticalCenter
         // Names come from other people's invitations: never rich text.
         textFormat: Text.PlainText
-        text: modelData.name ? modelData.name + "  <" + modelData.email + ">" : modelData.email
+        text: Model.guestLabel(modelData)
         elide: Text.ElideRight
         color: root.foreground
         font.family: root.fontFamily

@@ -302,3 +302,13 @@ test('mapsUrl output passes safeUrl', () => {
   const url = Model.mapsUrl('Rua "A" <1>, it\'s here')
   assert.equal(Model.safeUrl(url), url)
 })
+
+test('guestLabel puts the address first, so a long name can only cut itself off', () => {
+  const long = 'Made-up Manager (Finance team) '.repeat(4)
+  const label = Model.guestLabel({ email: 'stranger@example.invalid', name: long })
+  assert.ok(label.startsWith('stranger@example.invalid  ('))
+})
+
+test('guestLabel is the address alone when there is no name', () => {
+  assert.equal(Model.guestLabel({ email: 'made-up@example.invalid', name: '  ' }), 'made-up@example.invalid')
+})

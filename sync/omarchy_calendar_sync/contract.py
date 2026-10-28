@@ -59,6 +59,9 @@ FIELD_LENGTHS = {
     "description": DESCRIPTION_LIMIT,
 }
 
+MAX_GUEST_SUGGESTIONS = 200
+SUGGESTION_LENGTHS = {"email": 254, "name": 100}
+
 _DATE_KEY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -161,6 +164,8 @@ def size_problem(text):
 def _validate_suggestions(suggestions):
     if not isinstance(suggestions, list):
         return ["guestSuggestions must be a list"]
+    if len(suggestions) > MAX_GUEST_SUGGESTIONS:
+        return [f"guestSuggestions holds more than {MAX_GUEST_SUGGESTIONS} entries"]
     problems = []
     for index, item in enumerate(suggestions):
         where = f"guestSuggestions[{index}]"
@@ -171,6 +176,16 @@ def _validate_suggestions(suggestions):
             problems.append(f"{where}.email must be a non-empty string")
         if "name" in item and not isinstance(item["name"], str):
             problems.append(f"{where}.name must be a string when present")
+        problems.extend(_suggestion_length_problems(where, item))
+    return problems
+
+
+def _suggestion_length_problems(where, item):
+    problems = []
+    for field, limit in SUGGESTION_LENGTHS.items():
+        value = item.get(field)
+        if isinstance(value, str) and len(value) > limit:
+            problems.append(f"{where}.{field} is longer than {limit} characters")
     return problems
 
 
