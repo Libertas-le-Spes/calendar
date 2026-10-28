@@ -144,12 +144,13 @@ def sync_rows(c):
 
 class TestFeeds(unittest.TestCase):
     def test_config_shapes(self):
-        self.assertEqual(ics.parse_feeds(URL)[0]["url"], URL)
+        feeds, _refused = ics.parse_feeds(URL)
+        self.assertEqual(feeds[0]["url"], URL)
         self.assertEqual(
-            ics.parse_feeds([{"url": "webcal://x.example/a.ics", "name": "N"}]),
+            ics.parse_feeds([{"url": "webcal://x.example/a.ics", "name": "N"}])[0],
             [{"url": "https://x.example/a.ics", "name": "N", "color": ""}],
         )
-        self.assertEqual(ics.parse_feeds([None, "", {"name": "no url"}]), [])
+        self.assertEqual(ics.parse_feeds([None, "", {"name": "no url"}]), ([], []))
 
     def test_the_secret_url_never_reaches_ids_or_names(self):
         self.assertNotIn("private", ics.feed_id(URL))
@@ -289,7 +290,7 @@ class TestFailures(unittest.TestCase):
         with contextlib.redirect_stdout(stdout):
             calendars = client(fetch=fetch, feeds=["https://broken.example/a.ics", URL]).calendars()
         self.assertEqual(len(calendars), 1)
-        self.assertIn("skipping https://broken.example/...: boom", stdout.getvalue())
+        self.assertIn("skipping https://broken.example/...: OSError while reading the feed", stdout.getvalue())
 
     def test_every_feed_failing_is_a_sync_error_that_hides_the_secret_path(self):
         def fetch(url):
@@ -358,4 +359,95 @@ class TestExpansionFailure(unittest.TestCase):
         with mock.patch.object(ics, "occurrences_in_window", side_effect=failure):
             with self.assertRaises(CalendarUnreadable) as raised:
                 c.events(calendars[0]["id"], "2026-10-01T00:00:00+00:00", "2026-10-31T00:00:00+00:00")
+        self.assertNotIn("SECRETMADEUP", str(raised.exception))
+
+
+SECRET = "https://calendar.example.invalid/ical/made-up/private-SECRETMADEUP/basic.ics?token=QUERYMADEUP"
+
+
+class TestFeedAddressRules(unittest.TestCase):
+    def test_an_https_address_is_safe(self):
+        self.assertEqual(ics.unsafe_reason("https://feeds.example.invalid/a.ics"), "")
+
+    def test_a_webcal_address_is_read_as_https(self):
+        self.assertEqual(ics.unsafe_reason(ics.feed_url("webcal://feeds.example.invalid/a.ics")), "")
+
+    def test_a_plain_http_address_is_refused(self):
+        self.assertIn("https://", ics.unsafe_reason("http://feeds.example.invalid/a.ics"))
+
+    def test_an_address_with_a_user_name_and_password_is_refused(self):
+        self.assertIn("password", ics.unsafe_reason("https://madeup:PASSWORD@feeds.example.invalid/a.ics"))
+
+    def test_an_address_with_a_space_a_control_character_or_a_backslash_is_refused(self):
+        for address in ("https://feeds.example.invalid/a b.ics", "https://feeds.example.invalid/a\x07.ics", "https://evil.example\\@feeds.example.invalid/"):
+            with self.subTest(address=address):
+                self.assertNotEqual(ics.unsafe_reason(address), "")
+
+    def test_an_address_with_no_host_is_refused(self):
+        self.assertIn("host", ics.unsafe_reason("https:///a.ics"))
+
+    def test_an_unsafe_feed_is_set_apart_from_the_feeds(self):
+        feeds, refused = ics.parse_feeds(["http://feeds.example.invalid/a.ics", "https://feeds.example.invalid/b.ics"])
+        self.assertEqual([feed["url"] for feed in feeds], ["https://feeds.example.invalid/b.ics"])
+        self.assertEqual(refused, ["http://feeds.example.invalid/a.ics"])
+
+    def test_an_unsafe_feed_is_never_fetched_and_its_host_alone_is_logged(self):
+        fetched = []
+
+        def fetch(url):
+            fetched.append(url)
+            return FEED
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            client(fetch=fetch, feeds=["http://feeds.example.invalid/private-SECRETMADEUP.ics", URL]).calendars()
+        self.assertEqual(fetched, [URL])
+        self.assertIn("skipping http://feeds.example.invalid/...", stdout.getvalue())
+        self.assertNotIn("SECRETMADEUP", stdout.getvalue())
+
+
+class TestSecretsStayOutOfTheLog(unittest.TestCase):
+    def test_redact_keeps_only_the_scheme_and_host(self):
+        self.assertEqual(ics.redact(SECRET), "https://calendar.example.invalid/...")
+
+    def test_redact_drops_a_user_name_and_password(self):
+        self.assertEqual(ics.redact("https://madeup:PASSWORD@dav.example.invalid/x.ics"), "https://dav.example.invalid/...")
+
+    def test_scrubbed_takes_out_the_path_and_query(self):
+        text = ics.scrubbed("failed: /ical/made-up/private-SECRETMADEUP/basic.ics and token=QUERYMADEUP", SECRET)
+        self.assertNotIn("SECRETMADEUP", text)
+        self.assertNotIn("QUERYMADEUP", text)
+
+    def test_a_failure_whose_message_quotes_the_address_logs_only_its_kind(self):
+        def fetch(url):
+            raise ValueError("unknown url type: %r" % url)
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            with self.assertRaises(ics.IcsError) as raised:
+                client(fetch=fetch, feeds=[SECRET]).calendars()
+        self.assertIn("ValueError while reading the feed", stdout.getvalue())
+        self.assertNotIn("SECRETMADEUP", stdout.getvalue())
+        self.assertNotIn("SECRETMADEUP", str(raised.exception))
+
+    def test_a_server_error_is_logged_as_its_status(self):
+        def fetch(url):
+            raise ics.FeedProblem("the server answered HTTP 404")
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout), self.assertRaises(ics.IcsError):
+            client(fetch=fetch, feeds=[SECRET]).calendars()
+        self.assertIn("skipping https://calendar.example.invalid/...: the server answered HTTP 404", stdout.getvalue())
+
+
+class TestScrubLayer(unittest.TestCase):
+    def test_even_a_message_of_our_own_that_quotes_the_secret_path_is_scrubbed(self):
+        def fetch(url):
+            raise ics.FeedProblem("the server moved /ical/made-up/private-SECRETMADEUP/basic.ics")
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout), self.assertRaises(ics.IcsError) as raised:
+            client(fetch=fetch, feeds=[SECRET]).calendars()
+        self.assertIn("the server moved …", stdout.getvalue())
+        self.assertNotIn("SECRETMADEUP", stdout.getvalue())
         self.assertNotIn("SECRETMADEUP", str(raised.exception))

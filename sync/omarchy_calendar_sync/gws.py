@@ -15,6 +15,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from . import web
 from .errors import SyncError, TooManyEvents
 from .limits import EVENTS_PER_CALENDAR
 
@@ -84,7 +85,7 @@ def _https(method, url, headers, data):
     not an exception; only a request that never got one raises."""
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+        with web.open_with_credential(request, HTTP_TIMEOUT_SECONDS) as response:
             return response.status, response.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as error:
         return error.code, error.read().decode("utf-8", "replace")

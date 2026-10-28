@@ -27,6 +27,7 @@ from datetime import date, datetime, timedelta
 
 from .contract import CALENDAR_COLORS
 from .errors import CalendarUnreadable, SyncError, TooManyEvents
+from . import web
 from .feed_expansion import affordable_calendar, occurrences_in_window
 from .limits import FEED_BYTES
 from .localzone import resolve_local_timezone
@@ -69,11 +70,30 @@ def feed_url(value):
 
 
 def redact(url):
-    """A URL safe to log. The path of a private feed is the credential."""
-    text = feed_url(url)
-    scheme, _, rest = text.partition("://")
-    host = rest.split("/", 1)[0]
-    return "%s://%s/..." % (scheme, host) if host else "(no url)"
+    """A URL safe to log: its scheme and host only.
+
+    The path of a private feed is the credential, and an address may carry
+    a user name and password before its host.
+    """
+    try:
+        parts = urllib.parse.urlsplit(feed_url(url))
+        host = parts.hostname
+    except ValueError:
+        return "(unreadable address)"
+    if not host:
+        return "(no host)"
+    return "%s://%s/..." % (parts.scheme, host)
+
+
+def scrubbed(text, url):
+    """`text` with every secret part of `url` taken out, for printing."""
+    address = feed_url(url)
+    parts = urllib.parse.urlsplit(address)
+    for secret in (address, parts.path, parts.query):
+        if len(secret) > 1:
+            text = text.replace(secret, "…")
+    return text
+
 
 
 def feed_id(url):
@@ -94,14 +114,36 @@ def url_problem(value):
     secret one, and both are easy to copy by mistake.
     """
     url = feed_url(value)
-    if not url.startswith(("https://", "http://")):
-        return "expected an https:// or webcal:// address"
+    unsafe = unsafe_reason(url)
+    if unsafe:
+        return unsafe
     if "calendar.google.com" in url:
         if "/embed" in url:
             return "that is the embed link, a web page rather than a feed; " + SECRET_HINT
         if "/public/" in url:
             return ("that is the public address, which only works for a "
                     "calendar shared publicly; " + SECRET_HINT)
+    return ""
+
+
+_CONTROL_OR_SPACE = re.compile(r"[\x00-\x20\x7f\\]")
+
+
+def unsafe_reason(url):
+    """Why the sync would refuse to fetch `url`, or blank when it is safe to."""
+    if not url.startswith("https://"):
+        return "expected an https:// or webcal:// address"
+    if _CONTROL_OR_SPACE.search(url):
+        return "the address holds spaces, control characters or a backslash"
+    try:
+        parts = urllib.parse.urlsplit(url)
+        host = parts.hostname
+    except ValueError:
+        return "the address cannot be read"
+    if not host:
+        return "the address has no host"
+    if parts.username is not None or parts.password is not None:
+        return "the address carries a user name or password, which would end up in logs"
     return ""
 
 
@@ -139,11 +181,13 @@ def parse_feeds(raw):
     """Normalize the `ics` config value into a list of {url, name, color}.
 
     Accepts a single URL string, a list of URL strings, or a list of objects
-    with `url` and optional `name` and `color`.
+    with `url` and optional `name` and `color`. Returns the feeds and, apart,
+    the addresses refused as unsafe to fetch.
     """
     if isinstance(raw, (str, dict)):
         raw = [raw]
     feeds = []
+    refused = []
     for entry in raw or []:
         if isinstance(entry, str):
             entry = {"url": entry}
@@ -152,6 +196,9 @@ def parse_feeds(raw):
         url = feed_url(entry.get("url"))
         if not url:
             continue
+        if unsafe_reason(url):
+            refused.append(url)
+            continue
         feeds.append(
             {
                 "url": url,
@@ -159,17 +206,24 @@ def parse_feeds(raw):
                 "color": str(entry.get("color") or "").strip(),
             }
         )
-    return feeds
+    return feeds, refused
 
 
-class FeedTooLarge(ValueError):
+class FeedProblem(Exception):
+    """A feed could not be read. The message is safe to log."""
+
+
+class FeedTooLarge(FeedProblem):
     """A feed is larger than any real calendar the sync reads."""
 
 
 def _http_get(url):
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(request, timeout=FETCH_TIMEOUT) as response:
-        return read_capped(response, FEED_BYTES)
+    try:
+        with web.open_public(request, FETCH_TIMEOUT) as response:
+            return read_capped(response, FEED_BYTES)
+    except urllib.error.HTTPError as error:
+        raise FeedProblem("the server answered HTTP %d" % error.code) from None
 
 
 def read_capped(stream, limit):
@@ -280,6 +334,12 @@ def occurrence_to_event(component, local_tz, identity="", calendar_id=""):
     )
 
 
+def _skip(url, reason):
+    failure = scrubbed("%s: %s" % (redact(url), reason), url)
+    print("skipping " + failure)
+    return failure
+
+
 class Ics:
     """A calendar client backed by one or more iCalendar URLs.
 
@@ -293,7 +353,7 @@ class Ics:
     can_write = False
 
     def __init__(self, feeds, identity="", fetch=None, local_tz=None):
-        self._feeds = parse_feeds(feeds)
+        self._feeds, self._refused = parse_feeds(feeds)
         self._identity = identity
         self._fetch = fetch or _http_get
         self._local_tz = local_tz if local_tz is not None else resolve_local_timezone()
@@ -320,17 +380,18 @@ class Ics:
         icalendar, _rie = _load_libs()
         found = []
         failures = []
+        for url in self._refused:
+            failures.append(_skip(url, unsafe_reason(url)))
         for position, feed in enumerate(self._feeds):
             url = feed["url"]
             try:
                 body = self._fetch(url)
                 calendar = icalendar.Calendar.from_ical(body)
-            except (urllib.error.URLError, OSError, ValueError) as error:
-                # One broken feed must not sink the others.
-                problem = url_problem(url)
-                reason = "%s (%s)" % (error, problem) if problem else str(error)
-                failures.append("%s: %s" % (redact(url), reason))
-                print("skipping %s: %s" % (redact(url), reason))
+            except FeedProblem as problem:
+                failures.append(_skip(url, str(problem)))
+                continue
+            except Exception as error:
+                failures.append(_skip(url, "%s while reading the feed" % type(error).__name__))
                 continue
 
             ident = feed_id(url)

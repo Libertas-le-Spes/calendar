@@ -531,3 +531,21 @@ class TestGet(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCredentialRequests(unittest.TestCase):
+    def test_google_requests_go_through_the_opener_that_follows_no_redirect(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value.status = 200
+        response.__enter__.return_value.read.return_value = b"{}"
+        with mock.patch.object(gws.web, "open_with_credential", return_value=response) as opened, \
+                mock.patch.object(gws.web, "open_public") as public:
+            gws._https("POST", gws.TOKEN_URL, {"Content-Type": "application/x-www-form-urlencoded"}, b"made-up")
+        opened.assert_called_once()
+        self.assertEqual(opened.call_args.args[0].full_url, gws.TOKEN_URL)
+        public.assert_not_called()
+
+    def test_a_refused_redirect_is_reported_as_google_unreachable(self):
+        with mock.patch.object(gws.web, "open_with_credential", side_effect=gws.web.RedirectRefused("redirected")):
+            with self.assertRaises(gws.GwsApiError):
+                gws._https("GET", gws.CALENDAR_API, {}, None)
