@@ -79,13 +79,6 @@ class TestAffordableCalendar(unittest.TestCase):
         self.assertEqual(left_out, 0)
 
 
-def slow_between(start, end):
-    stop = time.monotonic() + 3
-    while time.monotonic() < stop:
-        pass
-    return []
-
-
 def single(uid, day):
     event = icalendar.Event()
     event.add("UID", uid)
@@ -128,38 +121,65 @@ class TestWhatReachesTheExpansion(unittest.TestCase):
                 feed_expansion.affordable_calendar(icalendar, calendar, FIRST_DAY, LAST_DAY)
 
 
-class TestOccurrencesInWindow(unittest.TestCase):
-    def test_an_expansion_still_running_when_its_time_is_up_skips_the_calendar(self):
-        library = mock.Mock()
-        library.of.return_value.between.side_effect = slow_between
-        with mock.patch.object(feed_expansion, "EXPANSION_SECONDS", 0.2):
-            with self.assertRaises(CalendarUnreadable) as raised:
-                feed_expansion.occurrences_in_window(library, calendar_of(), START, END)
-        self.assertIn("longer than", str(raised.exception))
-
+class TestExpandBySeries(unittest.TestCase):
     def library_returning(self, occurrences):
         library = mock.Mock()
         library.of.return_value.between.return_value = occurrences
         return library
 
-    def test_the_library_is_asked_for_exactly_the_window_once(self):
+    def test_the_library_is_asked_for_exactly_the_window(self):
         library = self.library_returning([])
-        calendar = calendar_of()
-        feed_expansion.occurrences_in_window(library, calendar, START, END)
-        library.of.assert_called_once_with(calendar)
+        feed_expansion.expand_by_series(icalendar, library, calendar_of(vevent("one@example.invalid", {"FREQ": "DAILY"})), START, END)
         library.of.return_value.between.assert_called_once_with(START, END)
+
+    def test_each_series_is_expanded_on_its_own_and_plain_events_together(self):
+        library = self.library_returning([])
+        calendar = calendar_of(vevent("one@example.invalid", {"FREQ": "DAILY"}), vevent("two@example.invalid", {"FREQ": "WEEKLY"}),
+                               single("a@example.invalid", date(2026, 10, 9)), single("b@example.invalid", date(2026, 10, 10)))
+        feed_expansion.expand_by_series(icalendar, library, calendar, START, END)
+        expanded = []
+        for call in library.of.call_args_list:
+            expanded.append(sorted(uids(call.args[0])))
+        self.assertEqual(sorted(expanded), [["a@example.invalid", "b@example.invalid"], ["one@example.invalid"], ["two@example.invalid"]])
+
+    def test_a_series_whose_expansion_raises_is_left_out_on_its_own(self):
+        def between_unless_broken(start, end):
+            raise ValueError("made-up")
+
+        library = mock.Mock()
+        healthy = mock.Mock()
+        healthy.between.return_value = ["occurrence"]
+        broken = mock.Mock()
+        broken.between.side_effect = between_unless_broken
+        library.of.side_effect = [healthy, broken]
+        calendar = calendar_of(vevent("good@example.invalid", {"FREQ": "DAILY"}), vevent("bad@example.invalid", {"FREQ": "DAILY"}))
+        found, unreadable = feed_expansion.expand_by_series(icalendar, library, calendar, START, END)
+        self.assertEqual((found, unreadable), (["occurrence"], 1))
+
+    def test_plain_events_that_fail_together_are_retried_one_by_one(self):
+        library = mock.Mock()
+        together = mock.Mock()
+        together.between.side_effect = ValueError("made-up")
+        good = mock.Mock()
+        good.between.return_value = ["occurrence"]
+        bad = mock.Mock()
+        bad.between.side_effect = ValueError("made-up")
+        library.of.side_effect = [together, good, bad]
+        calendar = calendar_of(single("a@example.invalid", date(2026, 10, 9)), single("b@example.invalid", date(2026, 10, 10)))
+        found, unreadable = feed_expansion.expand_by_series(icalendar, library, calendar, START, END)
+        self.assertEqual((found, unreadable), (["occurrence"], 1))
 
     def test_a_calendar_at_the_limit_keeps_every_occurrence(self):
         library = self.library_returning(["first", "second"])
         with mock.patch.object(feed_expansion, "EVENTS_PER_CALENDAR", 2):
-            found = feed_expansion.occurrences_in_window(library, calendar_of(), START, END)
+            found, _ = feed_expansion.expand_by_series(icalendar, library, calendar_of(vevent("one@example.invalid", {"FREQ": "DAILY"})), START, END)
         self.assertEqual(found, ["first", "second"])
 
     def test_a_calendar_over_the_limit_is_refused(self):
         library = self.library_returning(["first", "second", "third"])
         with mock.patch.object(feed_expansion, "EVENTS_PER_CALENDAR", 2):
             with self.assertRaises(TooManyEvents):
-                feed_expansion.occurrences_in_window(library, calendar_of(), START, END)
+                feed_expansion.expand_by_series(icalendar, library, calendar_of(vevent("one@example.invalid", {"FREQ": "DAILY"})), START, END)
 
 
 class TestPastEvents(unittest.TestCase):

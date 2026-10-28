@@ -9,10 +9,10 @@ import time
 import urllib.error
 import unittest
 from unittest import mock
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from omarchy_calendar_sync import cli, config, errors, feed_download, feeds, ics, keyring, normalize
+from omarchy_calendar_sync import cli, config, errors, feed_download, feed_events, feed_worker, feeds, ics, keyring, normalize, worker_process
 from omarchy_calendar_sync.errors import CalendarUnreadable
 from omarchy_calendar_sync.config import DayWindow
 
@@ -125,12 +125,36 @@ END:VCALENDAR
 NOW = datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc)
 
 
+SECRET = "https://calendar.example.invalid/ical/made-up/private-SECRETMADEUP/basic.ics?token=QUERYMADEUP"
+
+
+GOOD_FEED_URL = "https://feeds.example.invalid/good.ics"
+BAD_FEED_URL = "https://feeds.example.invalid/bad.ics"
+GOOD_BODY = (
+    "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//made up//EN\r\n"
+    "BEGIN:VEVENT\r\nUID:good@example.invalid\r\nDTSTART:20261009T090000Z\r\nDTEND:20261009T100000Z\r\nSUMMARY:Made-up good\r\nEND:VEVENT\r\n"
+    "END:VCALENDAR\r\n"
+).encode()
+
+
+def bad_feed(event_lines):
+    return (
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//made up//EN\r\nBEGIN:VEVENT\r\nUID:bad@example.invalid\r\nSUMMARY:Made-up bad\r\n"
+        + event_lines + "END:VEVENT\r\nEND:VCALENDAR\r\n"
+    ).encode()
+
+
+def in_process(request, seconds):
+    return feed_worker.answer(request)
+
+
 def client(fetch=None, feeds=None, identity="me@example.com"):
     return ics.Ics(
         feeds if feeds is not None else [URL],
         identity=identity,
         fetch=fetch or (lambda url: FEED),
         local_tz=SAO_PAULO,
+        worker=in_process,
     )
 
 
@@ -265,7 +289,7 @@ class TestGoogleLinks(unittest.TestCase):
             self.assertEqual(ics.google_calendar_id(url), "", url)
 
     def test_event_url_is_unpadded_base64url_of_id_and_calendar(self):
-        url = ics.google_event_url("abc123@google.com", "me@example.com")
+        url = feed_events.google_event_url("abc123@google.com", "me@example.com")
         prefix, eid = url.split("eid=", 1)
         self.assertEqual(prefix, "https://calendar.google.com/calendar/event?")
         self.assertNotIn("=", eid)
@@ -273,8 +297,8 @@ class TestGoogleLinks(unittest.TestCase):
         self.assertEqual(base64.urlsafe_b64decode(padded), b"abc123 me@example.com")
 
     def test_no_link_without_a_google_uid_or_calendar(self):
-        self.assertEqual(ics.google_event_url("abc@example.org", "me@example.com"), "")
-        self.assertEqual(ics.google_event_url("abc@google.com", ""), "")
+        self.assertEqual(feed_events.google_event_url("abc@example.org", "me@example.com"), "")
+        self.assertEqual(feed_events.google_event_url("abc@google.com", ""), "")
 
 
 class TestFailures(unittest.TestCase):
@@ -392,20 +416,6 @@ class TestOversizedFeeds(unittest.TestCase):
         self.assertEqual(calendars[0]["id"], feeds.feed_id(good))
 
 
-class TestExpansionFailure(unittest.TestCase):
-    def test_a_feed_that_cannot_be_expanded_is_unreadable_on_its_own_without_quoting_the_error(self):
-        c = client()
-        calendars = c.calendars()
-        failure = ValueError("private-SECRETMADEUP in the message")
-        with mock.patch.object(ics, "occurrences_in_window", side_effect=failure):
-            with self.assertRaises(CalendarUnreadable) as raised:
-                c.events(calendars[0]["id"], "2026-10-01T00:00:00+00:00", "2026-10-31T00:00:00+00:00")
-        self.assertNotIn("SECRETMADEUP", str(raised.exception))
-
-
-SECRET = "https://calendar.example.invalid/ical/made-up/private-SECRETMADEUP/basic.ics?token=QUERYMADEUP"
-
-
 class TestFeedAddressRules(unittest.TestCase):
     def test_an_https_address_is_safe(self):
         self.assertEqual(feeds.unsafe_reason("https://feeds.example.invalid/a.ics"), "")
@@ -519,7 +529,7 @@ class TestKeyringFeeds(unittest.TestCase):
             fetched.append(url)
             return FEED
 
-        c = ics.Ics([{"secret": KEYRING_ID}], fetch=fetch, local_tz=SAO_PAULO, lookup=looked_up)
+        c = ics.Ics([{"secret": KEYRING_ID}], fetch=fetch, local_tz=SAO_PAULO, lookup=looked_up, worker=in_process)
         calendars = c.calendars()
         looked_up.assert_called_once_with(KEYRING_ID)
         self.assertEqual(fetched, [URL])
@@ -527,7 +537,7 @@ class TestKeyringFeeds(unittest.TestCase):
 
     def test_a_feed_missing_from_the_keyring_is_skipped_and_named_by_its_id(self):
         stdout = io.StringIO()
-        c = ics.Ics([{"secret": KEYRING_ID}, URL], fetch=lambda url: FEED, local_tz=SAO_PAULO, lookup=keyring_lookup({}))
+        c = ics.Ics([{"secret": KEYRING_ID}, URL], fetch=lambda url: FEED, local_tz=SAO_PAULO, lookup=keyring_lookup({}), worker=in_process)
         with contextlib.redirect_stdout(stdout):
             calendars = c.calendars()
         self.assertEqual(len(calendars), 1)
@@ -583,48 +593,6 @@ def feed_returning(body):
     return fetch
 
 
-class TestCostlySeries(unittest.TestCase):
-    def test_a_series_too_costly_to_expand_never_reaches_the_expansion(self):
-        c = client(fetch=feed_returning(FLOOD_FEED))
-        calendar_id = c.calendars()[0]["id"]
-        with mock.patch.object(ics, "occurrences_in_window", return_value=[]) as expanded, \
-                contextlib.redirect_stdout(io.StringIO()) as log:
-            c.events(calendar_id, "2026-10-01T00:00:00+00:00", "2026-10-31T00:00:00+00:00")
-        handed = expanded.call_args.args[1]
-        uids = []
-        for component in handed.walk("VEVENT"):
-            uids.append(str(component.get("UID")))
-        self.assertEqual(uids, ["normal@example.invalid"])
-        self.assertIn("skipping 1 repeating events", log.getvalue())
-
-
-class TestSkipReasonsPassThrough(unittest.TestCase):
-    def test_the_reason_a_calendar_is_skipped_reaches_the_log_unchanged(self):
-        c = client()
-        calendar_id = c.calendars()[0]["id"]
-        slow = CalendarUnreadable("its events took longer than 10 seconds to expand")
-        with mock.patch.object(ics, "occurrences_in_window", side_effect=slow):
-            with self.assertRaises(CalendarUnreadable) as raised:
-                c.events(calendar_id, "2026-10-01T00:00:00+00:00", "2026-10-31T00:00:00+00:00")
-        self.assertEqual(str(raised.exception), "its events took longer than 10 seconds to expand")
-
-
-GOOD_FEED_URL = "https://feeds.example.invalid/good.ics"
-BAD_FEED_URL = "https://feeds.example.invalid/bad.ics"
-GOOD_BODY = (
-    "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//made up//EN\r\n"
-    "BEGIN:VEVENT\r\nUID:good@example.invalid\r\nDTSTART:20261009T090000Z\r\nDTEND:20261009T100000Z\r\nSUMMARY:Made-up good\r\nEND:VEVENT\r\n"
-    "END:VCALENDAR\r\n"
-).encode()
-
-
-def bad_feed(event_lines):
-    return (
-        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//made up//EN\r\nBEGIN:VEVENT\r\nUID:bad@example.invalid\r\nSUMMARY:Made-up bad\r\n"
-        + event_lines + "END:VEVENT\r\nEND:VCALENDAR\r\n"
-    ).encode()
-
-
 class TestOneMalformedEvent(unittest.TestCase):
     VARIANTS = {
         "a start that is a time of day": "DTSTART;VALUE=TIME:090000\r\nRRULE:FREQ=DAILY\r\n",
@@ -641,7 +609,7 @@ class TestOneMalformedEvent(unittest.TestCase):
                 return bad_feed(event_lines)
             return GOOD_BODY
 
-        source = ics.Ics([BAD_FEED_URL, GOOD_FEED_URL], fetch=fetch, local_tz=SAO_PAULO)
+        source = ics.Ics([BAD_FEED_URL, GOOD_FEED_URL], fetch=fetch, local_tz=SAO_PAULO, worker=in_process)
         written = mock.create_autospec(cli.write_atomic)
         with mock.patch.object(cli, "write_atomic", written), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -660,64 +628,155 @@ class TestOneMalformedEvent(unittest.TestCase):
                 self.assertNotIn("Made-up bad", titles)
 
 
-class TestFeedsTogether(unittest.TestCase):
-    def test_a_feed_that_would_take_all_feeds_past_the_total_is_skipped(self):
-        def fetch(url):
-            return GOOD_BODY
-
-        source = ics.Ics([BAD_FEED_URL, GOOD_FEED_URL], fetch=fetch, local_tz=SAO_PAULO)
-        stdout = io.StringIO()
-        with mock.patch.object(ics, "TOTAL_FEED_BYTES", len(GOOD_BODY) + 1), contextlib.redirect_stdout(stdout):
-            calendars = source.calendars()
-        self.assertEqual(len(calendars), 1)
-        self.assertIn("the feeds together are larger than", stdout.getvalue())
-
-    def test_reading_a_feed_past_its_time_is_a_feed_problem(self):
-        def slow_parse(body):
-            time.sleep(5)
-
-        library = mock.Mock()
-        library.Calendar.from_ical.side_effect = slow_parse
-        with mock.patch.object(ics, "PARSE_SECONDS", 0.2):
-            with self.assertRaises(errors.FeedProblem):
-                ics._parse(library, b"made-up")
-
-
-class TestOneOccurrenceThatCannotBeConverted(unittest.TestCase):
-    def test_the_other_occurrences_are_still_returned(self):
-        c = client()
-        calendar_id = c.calendars()[0]["id"]
-        real = ics.occurrence_to_event
-
-        def convert(component, *rest):
-            if str(component.get("SUMMARY")) == "Standup":
-                raise OverflowError("made-up")
-            return real(component, *rest)
-
-        with mock.patch.object(ics, "occurrence_to_event", autospec=True, side_effect=convert), \
-                contextlib.redirect_stdout(io.StringIO()):
-            found = c.events(calendar_id, "2026-09-01T00:00:00+00:00", "2026-11-30T00:00:00+00:00")
-        titles = set()
-        for event in found:
-            titles.add(event["summary"])
-        self.assertNotIn("Standup", titles)
-        self.assertNotEqual(titles, set())
-
-
 class TestUnprintableHosts(unittest.TestCase):
     def test_a_host_with_control_characters_is_not_printed(self):
         self.assertEqual(feeds.redact("https://a\x1bb.example.invalid/x"), "(unprintable host)")
 
 
-class TestSkippedOccurrenceIsNamed(unittest.TestCase):
-    def test_an_occurrence_that_cannot_be_read_is_named_in_the_log(self):
-        c = client()
+FLOOD_FEED = (
+    "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//made up//EN\r\n"
+    "BEGIN:VEVENT\r\nUID:flood@example.invalid\r\nDTSTART:20200101T000000Z\r\nRRULE:FREQ=SECONDLY\r\nSUMMARY:Made-up flood\r\nEND:VEVENT\r\n"
+    "BEGIN:VEVENT\r\nUID:normal@example.invalid\r\nDTSTART:20261002T090000Z\r\nDTEND:20261002T100000Z\r\nSUMMARY:Made-up meeting\r\nEND:VEVENT\r\n"
+    "END:VCALENDAR\r\n"
+).encode()
+
+
+def feed_returning(body):
+    def fetch(url):
+        return body
+    return fetch
+
+
+def worker_answering(answer):
+    def worker(request, seconds):
+        return answer
+    return worker
+
+
+class TestTheClientAndItsWorker(unittest.TestCase):
+    def test_the_worker_gets_the_feed_and_the_window(self):
+        seen = []
+
+        def worker(request, seconds):
+            seen.append(request)
+            return {"events": [], "left_out": 0, "unconvertible": 0}
+
+        c = ics.Ics([URL], fetch=feed_returning(FEED), local_tz=SAO_PAULO, worker=worker)
+        calendar_id = c.calendars()[0]["id"]
+        c.events(calendar_id, "2026-10-01T00:00:00+00:00", "2026-10-31T00:00:00+00:00")
+        self.assertEqual(base64.b64decode(seen[0]["body"]), FEED)
+        self.assertEqual((seen[0]["start"], seen[0]["end"]), ("2026-10-01T00:00:00+00:00", "2026-10-31T00:00:00+00:00"))
+        self.assertEqual(seen[0]["zone"], {"key": "America/Sao_Paulo"})
+
+    def test_a_worker_that_fails_skips_only_that_calendar(self):
+        def worker(request, seconds):
+            raise worker_process.WorkerFailed("reading the feed ran out of memory or stopped")
+
+        c = ics.Ics([URL], fetch=feed_returning(FEED), local_tz=SAO_PAULO, worker=worker)
+        calendar_id = c.calendars()[0]["id"]
+        with self.assertRaises(errors.CalendarUnreadable) as raised:
+            c.events(calendar_id, "2026-10-01T00:00:00+00:00", "2026-10-31T00:00:00+00:00")
+        self.assertEqual(str(raised.exception), "reading the feed ran out of memory or stopped")
+
+    def test_the_reason_the_worker_gives_reaches_the_log_unchanged(self):
+        c = ics.Ics([URL], fetch=feed_returning(FEED), local_tz=SAO_PAULO, worker=worker_answering({"problem": "more than 2000 events in the sync window"}))
+        calendar_id = c.calendars()[0]["id"]
+        with self.assertRaises(errors.CalendarUnreadable) as raised:
+            c.events(calendar_id, "2026-10-01T00:00:00+00:00", "2026-10-31T00:00:00+00:00")
+        self.assertEqual(str(raised.exception), "more than 2000 events in the sync window")
+
+    def test_what_the_worker_left_out_is_named_in_the_log(self):
+        answer = {"events": [], "left_out": 2, "unconvertible": 1}
+        c = ics.Ics([URL], fetch=feed_returning(FEED), local_tz=SAO_PAULO, worker=worker_answering(answer))
         calendar_id = c.calendars()[0]["id"]
         stdout = io.StringIO()
-        with mock.patch.object(ics, "occurrence_to_event", autospec=True, side_effect=OverflowError("made-up")), \
-                contextlib.redirect_stdout(stdout):
-            c.events(calendar_id, "2026-09-01T00:00:00+00:00", "2026-11-30T00:00:00+00:00")
-        self.assertIn("skipping an event in %s: it cannot be read (OverflowError)" % calendar_id, stdout.getvalue())
+        with contextlib.redirect_stdout(stdout):
+            c.events(calendar_id, "2026-10-01T00:00:00+00:00", "2026-10-31T00:00:00+00:00")
+        self.assertIn("skipping 2 repeating events in %s" % calendar_id, stdout.getvalue())
+        self.assertIn("skipping 1 events in %s: they cannot be read" % calendar_id, stdout.getvalue())
+
+    def test_each_feed_gets_a_share_of_the_run_and_never_more_than_the_worker_limit(self):
+        many = []
+        for number in range(8):
+            many.append("https://feeds.example.invalid/%d.ics" % number)
+        self.assertEqual(ics.Ics(many, fetch=feed_returning(FEED), local_tz=SAO_PAULO)._seconds_per_feed(), ics.RUN_SECONDS // 8)
+        self.assertEqual(ics.Ics([URL], fetch=feed_returning(FEED), local_tz=SAO_PAULO)._seconds_per_feed(), ics.WORKER_SECONDS + 15)
+
+    def test_the_feeds_own_name_and_colour_are_read_from_its_header(self):
+        body = b"BEGIN:VCALENDAR\r\nX-WR-CALNAME:Made-up team\r\nX-APPLE-CALENDAR-COLOR:#a1b2c3\r\nEND:VCALENDAR\r\n"
+        found = ics.Ics([URL], fetch=feed_returning(body), local_tz=SAO_PAULO, worker=in_process).calendars()[0]
+        self.assertEqual((found["name"], found["color"]), ("Made-up team", "#a1b2c3"))
+
+
+class TestTheWorker(unittest.TestCase):
+    def request(self, body):
+        return {
+            "body": base64.b64encode(body).decode("ascii"),
+            "start": "2026-10-01T00:00:00+00:00",
+            "end": "2026-10-31T00:00:00+00:00",
+            "zone": {"key": "UTC"},
+            "identity": "",
+            "google_id": "",
+        }
+
+    def test_a_series_too_costly_to_expand_is_left_out_and_the_rest_returned(self):
+        answer = feed_worker.answer(self.request(FLOOD_FEED))
+        titles = []
+        for event in answer["events"]:
+            titles.append(event["summary"])
+        self.assertEqual((titles, answer["left_out"]), (["Made-up meeting"], 1))
+
+    def test_an_error_quoting_the_feed_is_answered_by_its_kind_alone(self):
+        failure = ValueError("private-SECRETMADEUP in the message")
+        with mock.patch.object(feed_worker, "expand_by_series", autospec=True, side_effect=failure):
+            answer = feed_worker.answer(self.request(FLOOD_FEED))
+        self.assertEqual(answer, {"problem": "ValueError while reading its events"})
+
+    def test_running_out_of_memory_is_answered_as_a_problem(self):
+        with mock.patch.object(feed_worker, "expand_by_series", autospec=True, side_effect=MemoryError()):
+            answer = feed_worker.answer(self.request(FLOOD_FEED))
+        self.assertEqual(answer, {"problem": "its events need more memory than one feed may use"})
+
+    def test_work_still_running_when_its_time_is_up_is_answered_as_a_problem(self):
+        def spin(*arguments):
+            stop = time.monotonic() + 3
+            while time.monotonic() < stop:
+                pass
+
+        with mock.patch.object(feed_worker, "WORKER_SECONDS", 0.2), \
+                mock.patch.object(feed_worker, "expand_by_series", autospec=True, side_effect=spin):
+            answer = feed_worker.answer(self.request(FLOOD_FEED))
+        self.assertIn("took longer than", answer["problem"])
+
+    def test_an_occurrence_that_cannot_be_converted_is_counted_and_the_rest_returned(self):
+        real = feed_worker.occurrence_to_event
+
+        def convert(component, *rest):
+            if str(component.get("SUMMARY")) == "Made-up meeting":
+                raise OverflowError("made-up")
+            return real(component, *rest)
+
+        body = FLOOD_FEED.replace(b"UID:flood@example.invalid\r\nDTSTART:20200101T000000Z\r\nRRULE:FREQ=SECONDLY", b"UID:other@example.invalid\r\nDTSTART:20261003T090000Z")
+        with mock.patch.object(feed_worker, "occurrence_to_event", autospec=True, side_effect=convert):
+            answer = feed_worker.answer(self.request(body))
+        self.assertEqual((len(answer["events"]), answer["unconvertible"]), (1, 1))
+
+    def test_main_limits_its_own_memory_before_reading_the_request(self):
+        stdin = io.StringIO(json.dumps(self.request(FLOOD_FEED)))
+        stdout = io.StringIO()
+        with mock.patch.object(feed_worker.resource, "setrlimit", autospec=True) as limited, \
+                mock.patch.object(feed_worker.sys, "stdin", stdin), mock.patch.object(feed_worker.sys, "stdout", stdout):
+            feed_worker.main()
+        limited.assert_called_once_with(feed_worker.resource.RLIMIT_AS, (feed_worker.WORKER_MEMORY_BYTES, feed_worker.WORKER_MEMORY_BYTES))
+        self.assertIn("events", json.loads(stdout.getvalue()))
+
+    def test_a_zone_is_described_by_name_and_rebuilt_from_it(self):
+        self.assertEqual(feed_worker.zone_from(feed_worker.describe_zone(SAO_PAULO)), SAO_PAULO)
+
+    def test_a_fixed_offset_is_described_by_its_seconds(self):
+        fixed = timezone(timedelta(hours=2))
+        self.assertEqual(feed_worker.describe_zone(fixed), {"offset_seconds": 7200})
+        self.assertEqual(feed_worker.zone_from({"offset_seconds": 7200}), fixed)
 
 
 if __name__ == "__main__":

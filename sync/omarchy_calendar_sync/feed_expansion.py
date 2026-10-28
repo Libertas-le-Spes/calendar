@@ -12,9 +12,8 @@ as long as it lasts.
 """
 
 from .errors import CalendarUnreadable, TooManyEvents
-from .limits import DATES_BEFORE_EXPANSION, EVENTS_PER_CALENDAR, EXPANSION_SECONDS, REPEAT_STEPS_PER_CALENDAR, REPEAT_STEPS_PER_SERIES
+from .limits import DATES_BEFORE_EXPANSION, EVENTS_PER_CALENDAR, REPEAT_STEPS_PER_CALENDAR, REPEAT_STEPS_PER_SERIES
 from .repeat_cost import series_cost, window_dates
-from .time_budget import TimeBudgetSpent, time_budget
 from .window_events import is_single, touches
 
 
@@ -38,16 +37,67 @@ def affordable_calendar(icalendar, calendar, first_day, last_day):
     return trimmed, len(left_out)
 
 
-def occurrences_in_window(rie, calendar, start, end):
-    """Expanded components between `start` and `end`, refusing a calendar that holds too many."""
+def expand_by_series(icalendar, rie, calendar, start, end):
+    """Expanded components between `start` and `end`, one series at a time.
+
+    Plain events are expanded together, and one by one only when that
+    fails, so a bad event or series is left out on its own. Returns the
+    components and how many were left out; a calendar that holds more
+    events than the sync takes is refused.
+    """
+    shared, singles, series = _split(calendar)
+    found = []
+    unreadable = 0
+    for members in [singles] + list(series.values()):
+        expanded, failed = _expand_members(icalendar, rie, calendar, shared, members, start, end)
+        found.extend(expanded)
+        unreadable += failed
+        if len(found) > EVENTS_PER_CALENDAR:
+            raise TooManyEvents()
+    return found, unreadable
+
+
+def _split(calendar):
+    shared = []
+    singles = []
+    series = {}
+    for component in calendar.subcomponents:
+        if component.name != "VEVENT":
+            shared.append(component)
+        elif is_single(component):
+            singles.append(component)
+        else:
+            series.setdefault(_series_key(component), []).append(component)
+    return shared, singles, series
+
+
+def _expand_members(icalendar, rie, calendar, shared, members, start, end):
+    if not members:
+        return [], 0
     try:
-        with time_budget(EXPANSION_SECONDS):
-            found = rie.of(calendar).between(start, end)
-    except TimeBudgetSpent:
-        raise CalendarUnreadable("its events took longer than %d seconds to expand" % EXPANSION_SECONDS) from None
-    if len(found) > EVENTS_PER_CALENDAR:
-        raise TooManyEvents()
-    return found
+        return rie.of(_calendar_of(icalendar, calendar, shared, members)).between(start, end), 0
+    except Exception:
+        return _expand_one_by_one(icalendar, rie, calendar, shared, members, start, end)
+
+
+def _expand_one_by_one(icalendar, rie, calendar, shared, members, start, end):
+    if len(members) == 1 or not is_single(members[0]):
+        return [], 1
+    found = []
+    failed = 0
+    for member in members:
+        expanded, member_failed = _expand_members(icalendar, rie, calendar, shared, [member], start, end)
+        found.extend(expanded)
+        failed += member_failed
+    return found, failed
+
+
+def _calendar_of(icalendar, calendar, shared, members):
+    group = icalendar.Calendar()
+    group.update(calendar)
+    for component in shared + members:
+        group.add_component(component)
+    return group
 
 
 def _weigh(calendar, first_day, last_day):
