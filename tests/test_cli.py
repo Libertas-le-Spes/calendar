@@ -412,7 +412,7 @@ class TestOneBadCalendar(unittest.TestCase):
             code, written, log = sync_capturing(FakeGws())
         self.assertEqual(code, cli.EXIT_SYNC_FAILED)
         written.assert_not_called()
-        self.assertIn("more than 10", log)
+        self.assertIn("would make the events file too large", log)
 
 
 class TestCopiesThatDiffer(unittest.TestCase):
@@ -472,3 +472,35 @@ class TestCalendarsWithoutAColour(unittest.TestCase):
         for row in written_rows(written):
             found.add(row["color"])
         self.assertEqual(found, {colors.CALENDAR_COLORS[0], colors.CALENDAR_COLORS[1]})
+
+
+def all_day_event(event_id, start, end):
+    return {"id": event_id, "status": "confirmed", "summary": "Made-up long", "start": {"date": start}, "end": {"date": end}}
+
+
+class TestFloodedCalendar(unittest.TestCase):
+    CALENDARS = [
+        {"id": "flood@example.com", "name": "Made-up flood", "color": "#f83a22"},
+        {"id": "quiet@example.com", "name": "Made-up quiet", "color": "#7bd148"},
+    ]
+
+    def test_a_calendar_whose_rows_would_pass_the_ceiling_is_skipped_and_the_others_written(self):
+        copies = {
+            "flood@example.com": [all_day_event("long", "2026-08-01", "2026-09-01")],
+            "quiet@example.com": [made_up_event("kept")],
+        }
+        with mock.patch.object(contract, "MAX_EVENT_ROWS", 10):
+            code, written, log = sync_capturing(FakeGws(calendars=self.CALENDARS, events=copies))
+        self.assertEqual(code, cli.EXIT_OK)
+        self.assertEqual([row["id"] for row in written_rows(written)], ["kept"])
+        self.assertIn("skipping calendar 'Made-up flood'", log)
+
+    def test_a_skipped_calendar_does_not_hide_another_calendars_copy_of_an_event(self):
+        shared = gevent("shared@google.com", "2026-08-10T19:15:00-05:00", "Made-up review")
+        copies = {
+            "flood@example.com": [all_day_event("long", "2026-08-01", "2026-09-01"), shared],
+            "quiet@example.com": [dict(shared, id="quiet-copy")],
+        }
+        with mock.patch.object(contract, "MAX_EVENT_ROWS", 10):
+            _, written, _ = sync_capturing(FakeGws(calendars=self.CALENDARS, events=copies))
+        self.assertEqual([row["id"] for row in written_rows(written)], ["quiet-copy"])

@@ -4,6 +4,8 @@ from datetime import date
 import base64
 import contextlib
 import io
+import time
+import urllib.error
 import unittest
 from unittest import mock
 from datetime import datetime, timezone
@@ -313,58 +315,65 @@ class FakeStream:
         self.chunks = list(chunks)
         self.reads = 0
 
-    def read(self, amount):
+    def read1(self, amount):
         self.reads += 1
         if not self.chunks:
             return b""
         return self.chunks.pop(0)
 
 
-class FakeClock:
-    def __init__(self, *readings):
-        self.readings = list(readings)
-
-    def __call__(self):
-        return self.readings.pop(0)
-
-
-def always(reading):
-    return lambda: reading
-
-
 class TestFeedSize(unittest.TestCase):
     def test_a_feed_at_the_limit_is_returned_whole(self):
-        body = feed_download.read_capped(FakeStream([b"xxxx", b"xxxxxx"]), 10, 100, clock=always(0))
-        self.assertEqual(body, b"x" * 10)
+        self.assertEqual(feed_download.read_capped(FakeStream([b"xxxx", b"xxxxxx"]), 10), b"x" * 10)
 
     def test_a_feed_over_the_limit_is_refused(self):
         with self.assertRaises(errors.FeedTooLarge):
-            feed_download.read_capped(FakeStream([b"xxxxxx", b"xxxxx"]), 10, 100, clock=always(0))
+            feed_download.read_capped(FakeStream([b"xxxxxx", b"xxxxx"]), 10)
 
     def test_reading_stops_at_the_chunk_that_passes_the_limit(self):
         stream = FakeStream([b"xxxxxx", b"xxxxx", b"never read"])
         with self.assertRaises(errors.FeedTooLarge):
-            feed_download.read_capped(stream, 10, 100, clock=always(0))
+            feed_download.read_capped(stream, 10)
         self.assertEqual(stream.reads, 2)
 
-    def test_each_read_asks_for_one_chunk(self):
+    def test_each_read_takes_what_has_arrived_up_to_one_chunk(self):
         stream = mock.Mock()
-        stream.read.side_effect = [b"x", b""]
-        feed_download.read_capped(stream, 10, 100, clock=always(0))
-        self.assertEqual(stream.read.call_args_list, [mock.call(feed_download.CHUNK_BYTES), mock.call(feed_download.CHUNK_BYTES)])
+        stream.read1.side_effect = [b"x", b""]
+        feed_download.read_capped(stream, 10)
+        self.assertEqual(stream.read1.call_args_list, [mock.call(feed_download.CHUNK_BYTES), mock.call(feed_download.CHUNK_BYTES)])
+
+
+class NeverFinishing:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read1(self, amount):
+        time.sleep(30)
+        return b"x"
 
 
 class TestFeedDeadline(unittest.TestCase):
-    def test_a_feed_that_arrives_before_the_deadline_is_read(self):
-        body = feed_download.read_capped(FakeStream([b"a", b"b"]), 10, 100, clock=FakeClock(98, 99, 100))
-        self.assertEqual(body, b"ab")
+    def test_a_feed_still_arriving_when_its_time_is_up_is_refused(self):
+        with mock.patch.object(feed_download.web, "open_public", return_value=NeverFinishing()), \
+                mock.patch.object(feed_download, "FEED_SECONDS", 0.2):
+            started = time.monotonic()
+            with self.assertRaises(errors.FeedProblem) as raised:
+                feed_download.download("https://feeds.example.invalid/slow.ics")
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertIn("longer than", str(raised.exception))
 
-    def test_a_feed_still_arriving_after_the_deadline_is_refused(self):
-        stream = FakeStream([b"a", b"b", b"c"])
-        with self.assertRaises(errors.FeedProblem):
-            feed_download.read_capped(stream, 10, 100, clock=FakeClock(99, 101))
-        self.assertEqual(stream.reads, 1)
+    def test_a_server_error_is_named_by_its_status(self):
+        refused = urllib.error.HTTPError("https://feeds.example.invalid/a.ics", 404, "Not Found", {}, None)
+        with mock.patch.object(feed_download.web, "open_public", side_effect=refused):
+            with self.assertRaises(errors.FeedProblem) as raised:
+                feed_download.download("https://feeds.example.invalid/a.ics")
+        self.assertEqual(str(raised.exception), "the server answered HTTP 404")
 
+
+class TestOversizedFeeds(unittest.TestCase):
     def test_an_oversized_feed_is_skipped_like_any_broken_feed(self):
         good = "https://feeds.example.invalid/good.ics"
         big = "https://feeds.example.invalid/big.ics"
@@ -555,3 +564,43 @@ class TestOnlyUnsafeFeeds(unittest.TestCase):
         with contextlib.redirect_stdout(stdout), self.assertRaises(ics.IcsError) as raised:
             c.calendars()
         self.assertIn("expected an https:// or webcal:// address", str(raised.exception))
+
+
+FLOOD_FEED = (
+    "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//made up//EN\r\n"
+    "BEGIN:VEVENT\r\nUID:flood@example.invalid\r\nDTSTART:20200101T000000Z\r\nRRULE:FREQ=SECONDLY\r\nSUMMARY:Made-up flood\r\nEND:VEVENT\r\n"
+    "BEGIN:VEVENT\r\nUID:normal@example.invalid\r\nDTSTART:20261002T090000Z\r\nDTEND:20261002T100000Z\r\nSUMMARY:Made-up meeting\r\nEND:VEVENT\r\n"
+    "END:VCALENDAR\r\n"
+).encode()
+
+
+def feed_returning(body):
+    def fetch(url):
+        return body
+    return fetch
+
+
+class TestCostlySeries(unittest.TestCase):
+    def test_a_series_too_costly_to_expand_never_reaches_the_expansion(self):
+        c = client(fetch=feed_returning(FLOOD_FEED))
+        calendar_id = c.calendars()[0]["id"]
+        with mock.patch.object(ics, "occurrences_in_window", return_value=[]) as expanded, \
+                contextlib.redirect_stdout(io.StringIO()) as log:
+            c.events(calendar_id, "2026-10-01T00:00:00+00:00", "2026-10-31T00:00:00+00:00")
+        handed = expanded.call_args.args[1]
+        uids = []
+        for component in handed.walk("VEVENT"):
+            uids.append(str(component.get("UID")))
+        self.assertEqual(uids, ["normal@example.invalid"])
+        self.assertIn("skipping 1 repeating events", log.getvalue())
+
+
+class TestSkipReasonsPassThrough(unittest.TestCase):
+    def test_the_reason_a_calendar_is_skipped_reaches_the_log_unchanged(self):
+        c = client()
+        calendar_id = c.calendars()[0]["id"]
+        slow = CalendarUnreadable("its events took longer than 10 seconds to expand")
+        with mock.patch.object(ics, "occurrences_in_window", side_effect=slow):
+            with self.assertRaises(CalendarUnreadable) as raised:
+                c.events(calendar_id, "2026-10-01T00:00:00+00:00", "2026-10-31T00:00:00+00:00")
+        self.assertEqual(str(raised.exception), "its events took longer than 10 seconds to expand")

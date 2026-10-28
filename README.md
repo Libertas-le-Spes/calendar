@@ -400,7 +400,7 @@ Rules a writer has to follow:
   midnight tells you nothing.
 - Write the file atomically, temp file then rename. The widget watches it.
 - Unknown fields are ignored, so you can add your own.
-- The widget shows nothing from a file over 16 MB or with more than 8,000
+- The widget shows nothing from a file over 16 MB (counted in UTF-8 bytes) or with more than 8,000
   rows, and says the file is too large. The bundled sync also keeps a title
   or location to 500 characters, a calendar name to 200 and a link to 2048.
 
@@ -486,13 +486,16 @@ Sync behaviour lives in `~/.config/omarchy/calendar-sync.json`:
 `include: []` means all of them. Names and ids both match. `gwsPath` has to be
 absolute: a systemd user service does not inherit your shell's `PATH`, so a
 `gws` installed by bun, cargo or pipx is invisible to it under its bare name.
-Each side of the window is at most 366 days.
+Each side of the window is at most 366 days; a larger number is read as 366.
 
 Everything in an event can be written by whoever sent the invitation or
 publishes the feed, so the sync bounds what one calendar can cost it: rows
-stop at the window, a repeating event that would expand to more than 200,000
-occurrences is left out, and a calendar with more than 2,000 events in the
-window is skipped. The journal names the calendar in each case, and the other
+stop at the window, and a repeating event is left out when expanding it
+would walk more than 200,000 dates: its periods up to the window's end or
+its UNTIL, times the dates each period can hold. A yearly birthday from 1970
+walks 57. A calendar whose repeats take longer than 10 seconds to expand,
+that holds more than 2,000 events in the window, or whose rows would take the
+events file past 8,000 rows or 16 MB is skipped. The journal names the calendar in each case, and the other
 calendars still update. A run that takes longer than 5 minutes is stopped.
 
 ## Troubleshooting
@@ -517,6 +520,8 @@ systemctl --user list-timers omarchy-calendar-sync.timer
 | `config error: ... holds feed addresses that other users can read` | The config is readable by other users. `chmod 600 ~/.config/omarchy/calendar-sync.json`, or run `sync/setup --ics` to move the addresses into your keyring |
 | `skipping keyring feed ics-...: the keyring holds no address for this feed` | The keyring was locked when the sync ran, or the address was removed from it. Unlock it, or run `sync/setup --ics` again |
 | `skipping calendar '...': more than 2000 events in the sync window` | One calendar holds more events than a real calendar would. Exclude it under `calendars.exclude`, or find the event that floods it |
+| `skipping calendar '...': its events would make the events file too large` | That calendar alone would take the file past 8,000 rows or 16 MB, often through events that last for months. The other calendars are written |
+| `skipping calendar '...': its events took longer than 10 seconds to expand` | A repeating event in it cannot be expanded in reasonable time, for example one whose rule never matches a date. The other calendars are written |
 | The panel says the events file is too large to show | Something wrote more than 16 MB or 8,000 rows. The bundled sync never does; check any other writer |
 | `The project ID you specified is already in use` during setup | Fixed in 0.1.1. Google Cloud project ids are unique across all of Google, and older versions hardcoded one. Update the plugin, or pass your own: `PROJECT_ID=something-unique sync/setup` |
 | Clicking an event opens your calendar but not the event | The link resolves only for the Google account the sync authenticated as. If your browser opens it in a profile signed into a different account, Google falls back to the calendar root. Route `google.com/calendar` to the profile holding that account |

@@ -23,7 +23,7 @@ import urllib.parse
 from datetime import date, datetime, timedelta
 
 from . import keyring
-from .errors import CalendarUnreadable, FeedProblem, SyncError, TooManyEvents
+from .errors import CalendarUnreadable, FeedProblem, SyncError
 from .feed_download import download
 from .feed_expansion import affordable_calendar, occurrences_in_window
 from .feeds import feed_url, parse_feeds, redact, scrubbed, unsafe_reason
@@ -294,7 +294,7 @@ class Ics:
             print("skipping %d repeating events in %s: they repeat too often to expand" % (left_out, calendar_id))
         try:
             occurrences = occurrences_in_window(rie, affordable, start, end)
-        except TooManyEvents:
+        except CalendarUnreadable:
             raise
         except Exception as error:
             raise CalendarUnreadable("its events cannot be expanded (%s)" % type(error).__name__)

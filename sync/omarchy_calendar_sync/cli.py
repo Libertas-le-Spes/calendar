@@ -14,6 +14,7 @@ from .errors import CalendarUnreadable, SyncError
 from .gws import Gws
 from .ics import Ics
 from .localzone import resolve_local_timezone
+from .row_budget import RowBudget
 
 EXIT_OK = 0
 EXIT_SYNC_FAILED = 1
@@ -163,14 +164,22 @@ def run(client, cfg, now, out_path, local_tz):
         seen = {}
         fetched = []
         skipped = 0
+        budget = RowBudget()
         for calendar in calendars:
             raw = _events_or_skip(client, calendar, time_min, time_max)
             if raw is None:
                 skipped += 1
                 continue
-            fresh = _drop_duplicates(raw, seen, calendar)
+            seen_with_these = dict(seen)
+            fresh = _drop_duplicates(raw, seen_with_these, calendar)
+            calendar_rows = _sound_rows(normalize.normalize_all(fresh, calendar, local_tz, window), calendar)
+            if not budget.admit(calendar_rows):
+                print(f"skipping calendar {calendar['name']!r}: its events would make the events file too large", file=sys.stderr)
+                skipped += 1
+                continue
+            seen = seen_with_these
             fetched.extend(fresh)
-            rows.extend(_sound_rows(normalize.normalize_all(fresh, calendar, local_tz, window), calendar))
+            rows.extend(calendar_rows)
 
         if calendars and skipped == len(calendars):
             raise SyncError("every calendar was skipped")

@@ -149,9 +149,9 @@ class TestWindowSize(unittest.TestCase):
         loaded = load_text(json.dumps({"window": {"pastDays": 0, "futureDays": config.MAX_WINDOW_DAYS}}))
         self.assertEqual(loaded["window"]["futureDays"], config.MAX_WINDOW_DAYS)
 
-    def test_a_window_one_day_too_long_is_refused(self):
-        with self.assertRaises(config.ConfigError):
-            load_text(json.dumps({"window": {"futureDays": config.MAX_WINDOW_DAYS + 1}}))
+    def test_a_window_longer_than_the_largest_is_read_as_the_largest(self):
+        loaded = load_text(json.dumps({"window": {"futureDays": config.MAX_WINDOW_DAYS + 1}}))
+        self.assertEqual(loaded["window"]["futureDays"], config.MAX_WINDOW_DAYS)
 
     def test_a_negative_window_is_refused(self):
         with self.assertRaises(config.ConfigError):

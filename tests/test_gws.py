@@ -517,3 +517,12 @@ class TestGwsTimeout(unittest.TestCase):
         with mock.patch.object(gws.subprocess, "run", side_effect=expired):
             with self.assertRaises(gws.GwsApiError):
                 gws._subprocess_runner(["gws", "--version"], {})
+
+
+class TestCalendarListPages(unittest.TestCase):
+    def test_every_page_of_the_calendar_list_is_read(self):
+        first = (200, json.dumps({"items": [{"id": "a@example.com", "summary": "A"}], "nextPageToken": "page2"}))
+        second = (200, json.dumps({"items": [{"id": "b@example.com", "summary": "B"}]}))
+        client, _, http = signed_in([first, second])
+        self.assertEqual([c["id"] for c in client.calendars()], ["a@example.com", "b@example.com"])
+        self.assertEqual(query(http.api_calls()[1]["url"])["pageToken"], "page2")

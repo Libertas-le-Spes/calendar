@@ -10,8 +10,9 @@ as long as it lasts.
 """
 
 from .errors import CalendarUnreadable, TooManyEvents
-from .limits import EVENTS_PER_CALENDAR, REPEAT_STEPS_PER_CALENDAR, REPEAT_STEPS_PER_SERIES
+from .limits import EVENTS_PER_CALENDAR, EXPANSION_SECONDS, REPEAT_STEPS_PER_CALENDAR, REPEAT_STEPS_PER_SERIES
 from .repeat_cost import series_cost
+from .time_budget import TimeBudgetSpent, time_budget
 
 
 def affordable_calendar(icalendar, calendar, last_day):
@@ -30,7 +31,11 @@ def affordable_calendar(icalendar, calendar, last_day):
 
 def occurrences_in_window(rie, calendar, start, end):
     """Expanded components between `start` and `end`, refusing a calendar that holds too many."""
-    found = rie.of(calendar).between(start, end)
+    try:
+        with time_budget(EXPANSION_SECONDS):
+            found = rie.of(calendar).between(start, end)
+    except TimeBudgetSpent:
+        raise CalendarUnreadable("its events took longer than %d seconds to expand" % EXPANSION_SECONDS) from None
     if len(found) > EVENTS_PER_CALENDAR:
         raise TooManyEvents()
     return found

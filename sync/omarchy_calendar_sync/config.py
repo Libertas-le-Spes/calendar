@@ -135,9 +135,9 @@ def _validate_calendars(calendars):
 def _coerce_days(value, key):
     """Turn a window day count into an int, or fail loudly naming the key."""
     days = _as_whole_number(value, key)
-    if days < 0 or days > MAX_WINDOW_DAYS:
-        raise ConfigError(f"{key} must be between 0 and {MAX_WINDOW_DAYS}")
-    return days
+    if days < 0:
+        raise ConfigError(f"{key} must not be negative")
+    return min(days, MAX_WINDOW_DAYS)
 
 
 def _as_whole_number(value, key):

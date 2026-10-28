@@ -6,7 +6,7 @@ document in the same pull request. Every example below uses made-up names, addre
 
 **Status, 2026-10-28.** Every finding is fixed on the branch `security-review-calendar`: F1 to F11 from this review, and
 N1 to N8 from a second, independent review that looked for what this one missed. The table below says what was done
-for each one. In three places the fix differs from what this review first recommended:
+for each one. In four places the fix differs from what this review first recommended:
 
 - **F1-B, lazy expansion.** `recurring-ical-events`' `after()` walks forward in steps that shrink to 15 minutes while
   any event is still going on. An event lasting a thousand years is going on in every step, so the open-ended walk
@@ -15,6 +15,10 @@ for each one. In three places the fix differs from what this review first recomm
 - **F1-D, the contract ceiling.** Refusing the whole document over one oversized event would let that event stop every
   calendar from updating, which is N1. The ceiling is still in `contract.validate`, but the sync drops each row that
   breaks the contract before the check, so only a document too large as a whole is refused.
+- **F1-B, the cost estimate.** It first trusted a rule's `COUNT`, which limits the dates kept, not the dates tried, so a
+  rule that can never match ("every hour on 30 February") was costed at 1 and took seconds to expand. It also counted a
+  yearly birthday from 1970 as one step a day, so a normal birthdays feed was skipped. The estimate now counts periods
+  and ignores `COUNT`, and a 10-second budget per calendar stops whatever the estimate misses.
 - **N4, duplicate events.** Preferring a copy from a calendar the user can write was considered and left out: anyone can
   share a calendar and grant write access. Only the primary calendar counts as the user's own.
 
@@ -64,7 +68,7 @@ What was done, and what each fix still fails to stop:
 
 | ID  | Fixed by | Still not stopped |
 |-----|----------|-------------------|
-| F1  | Rows stop at the window (at most 366 days each way). A repeat rule's cost is estimated from the rule, and a series over 200,000 steps is left out; a calendar over 1,000,000 steps or 2,000 events in the window is skipped, in every backend. A feed body over 16 MB is refused. The file holds at most 8,000 rows and 16 MB, and every text field has a length limit. The widget refuses a file over those ceilings before parsing it (`EventsFile.js`), and a test keeps both sides' numbers equal. | A calendar flooded with thousands of separate events is skipped as a whole, so its real events go too. The journal names it. |
+| F1  | Rows stop at the window (at most 366 days each way). A repeat rule's cost is estimated from the rule: the periods it walks up to the window's end or its UNTIL, times the dates each period can hold, with COUNT ignored because it limits the dates kept, not those tried. A series over 200,000 is left out, and a calendar over 1,000,000, over 2,000 events in the window, or whose expansion runs past 10 seconds is skipped. A feed body over 16 MB is refused. The file holds at most 8,000 rows and 16 MB, every text field has a length limit, and a calendar whose rows would pass either ceiling is skipped as a whole. The widget refuses a file over those ceilings, counted in UTF-8 bytes, before parsing it (`EventsFile.js`), and a test keeps both sides' numbers equal. | A calendar flooded with events, or with events that last for months, is skipped as a whole, so its real events go too. The journal names it. EDS expansion runs in C, so only the unit's 5-minute stop limits it. |
 | F2  | One `https`-only opener (`web.py`): no handler for any other scheme, and a redirect is followed only to another `https` address. Setup and the sync share one address rule: `https`, a host, no user name or password, no spaces, control characters or backslashes. | Nothing found. |
 | F3  | Every failure is caught per feed. Only the sync's own messages, or the error's kind, are printed. `redact()` keeps scheme and host only, and every printed line has the address's path and query removed as a last layer. | Nothing found. |
 | F4  | `setup --ics` stores each address in the keyring; the config names it by id. Every config is written 600. The sync refuses a config another user owns or can change, one in a folder others can change, and one others can read while it holds a plain address. Choosing the Google sync drops the feeds from the config and the keyring. | Programs running as the user can still ask the keyring while it is unlocked. |
@@ -76,7 +80,7 @@ What was done, and what each fix still fails to stop:
 | F10 | The sync refuses `python-icalendar` older than 7.2.2. | Nothing found. |
 | F11 | The profile is created 700 under a private umask, and the client secret installed 600 in one step, from the newest download. | Nothing found. The README's install command still names tmn73's repository: deciding which repository installs track is left to the owner. |
 | N1  | See below. | Nothing found. |
-| N2  | A feed has 60 seconds to arrive, read in 64 KB chunks; `gws` has 60 seconds; the unit stops a run after 5 minutes, 1 GB of memory with no swap to spill into, or 64 tasks. | An EDS call that hangs costs the whole run, until the unit stops it. |
+| N2  | A feed has 60 seconds in all to arrive, timed by the process's interval timer, which also interrupts a read waiting on a server that sends a byte at a time; it is read in pieces of up to 64 KB as they arrive; `gws` has 60 seconds; the unit stops a run after 5 minutes, 1 GB of memory with no swap to spill into, or 64 tasks. | An EDS call that hangs costs the whole run, until the unit stops it. |
 | N3  | The link rule refuses a user name and a backslash; Jitsi means `meet.jit.si`. Both suites test the same list of cases (`tests/fixtures/link-cases.json`). | Nothing found. |
 | N4  | A copy is dropped only when it says the same as the first one, or the first is in the primary calendar. | A copy in the primary calendar still wins over any other. |
 | N5  | Every `python3` in setup runs with `-I`. | Nothing found. |

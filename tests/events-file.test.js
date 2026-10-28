@@ -64,3 +64,12 @@ test('text longer than the size ceiling is refused before it is parsed', () => {
   }
   assert.equal(parses, 0)
 })
+
+test('a document past the size ceiling in bytes but not in characters is refused', () => {
+  const wide = '\u4e2d'.repeat(Math.floor(EventsFile.MAX_DOCUMENT_BYTES / 3) + 1)
+  assert.equal(EventsFile.read(wide).problem, 'too-large')
+})
+
+test('encodedLength counts the bytes each character takes in UTF-8', () => {
+  assert.equal(EventsFile.encodedLength('a\u00e9\u4e2d\ud83d\ude00'), 1 + 2 + 3 + 4)
+})

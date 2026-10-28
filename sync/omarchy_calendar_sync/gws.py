@@ -152,7 +152,7 @@ class Gws:
             raise GwsTooOld(f"gws {wanted} or newer is required, found {have}")
 
     def calendars(self):
-        payload = self._api("GET", "/users/me/calendarList", {"maxResults": 250})
+        payload = {"items": self._calendar_list_items()}
         calendars = [
             {
                 "id": item["id"],
@@ -172,6 +172,18 @@ class Gws:
             for item in payload.get("items", [])
         ]
         return sorted(calendars, key=lambda calendar: calendar["name"])
+
+    def _calendar_list_items(self):
+        items = []
+        params = {"maxResults": 250}
+        for _ in range(MAX_PAGES):
+            payload = self._api("GET", "/users/me/calendarList", params)
+            items.extend(payload.get("items", []))
+            page_token = payload.get("nextPageToken")
+            if not page_token:
+                return items
+            params = {"maxResults": 250, "pageToken": page_token}
+        raise GwsApiError(f"the calendar list did not finish paginating within {MAX_PAGES} pages")
 
     def events(self, calendar_id, time_min, time_max):
         items = []
@@ -279,12 +291,7 @@ class Gws:
         return token
 
     def auth_hint(self, cfg):
-        return (
-            "if this is an auth error, run: "
-            "GOOGLE_WORKSPACE_CLI_CONFIG_DIR=" + str(cfg["profile"]) + " "
-            "gws auth login --scopes "
-            "https://www.googleapis.com/auth/calendar.readonly"
-        )
+        return "if this is a sign-in error, run sync/setup again; it keeps writing on if it was on"
 
 
 def _api_url(path, params):

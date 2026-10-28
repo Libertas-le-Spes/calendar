@@ -1,3 +1,4 @@
+import time
 import unittest
 from datetime import date, datetime, timezone
 from unittest import mock
@@ -77,7 +78,20 @@ class TestAffordableCalendar(unittest.TestCase):
         self.assertEqual(left_out, 0)
 
 
+def slow_between(start, end):
+    time.sleep(30)
+    return []
+
+
 class TestOccurrencesInWindow(unittest.TestCase):
+    def test_an_expansion_still_running_when_its_time_is_up_skips_the_calendar(self):
+        library = mock.Mock()
+        library.of.return_value.between.side_effect = slow_between
+        with mock.patch.object(feed_expansion, "EXPANSION_SECONDS", 0.2):
+            with self.assertRaises(CalendarUnreadable) as raised:
+                feed_expansion.occurrences_in_window(library, calendar_of(), START, END)
+        self.assertIn("longer than", str(raised.exception))
+
     def library_returning(self, occurrences):
         library = mock.Mock()
         library.of.return_value.between.return_value = occurrences

@@ -1,9 +1,11 @@
 """What expanding one repeating event would cost, before it is expanded.
 
-Expanding a repeat rule walks every occurrence from the rule's first one,
-including those long before the sync window. A rule that repeats every
-second from years ago would keep the sync busy for hours, so its cost is
-worked out from the rule itself first.
+Expanding a repeat rule walks every period from the rule's first one, so a
+rule that repeats every second from years ago keeps the sync busy for hours.
+The cost is worked out from the rule itself: the periods walked up to the
+end of the window or the rule's UNTIL, times how many dates each period can
+hold. COUNT is ignored, since it limits the dates kept, not the dates
+tried. Anything this misses is caught by the expansion's time budget.
 """
 
 from datetime import date, datetime
@@ -16,8 +18,8 @@ FREQUENCY_SECONDS = {
     "HOURLY": 3600,
     "DAILY": SECONDS_IN_DAY,
     "WEEKLY": 7 * SECONDS_IN_DAY,
-    "MONTHLY": 28 * SECONDS_IN_DAY,
-    "YEARLY": 365 * SECONDS_IN_DAY,
+    "MONTHLY": 31 * SECONDS_IN_DAY,
+    "YEARLY": 366 * SECONDS_IN_DAY,
 }
 
 TIME_OF_DAY_PARTS = {
@@ -26,18 +28,58 @@ TIME_OF_DAY_PARTS = {
     "BYSECOND": 1,
 }
 
+DATES_PER_LISTED_DAY = {
+    "WEEKLY": {"BYDAY": 1},
+    "MONTHLY": {"BYDAY": 5, "BYMONTHDAY": 1},
+    "YEARLY": {"BYDAY": 53, "BYMONTHDAY": 12, "BYYEARDAY": 1, "BYWEEKNO": 7, "BYMONTH": 1},
+}
+
 
 def series_cost(vevent, last_day):
-    """An upper bound on the occurrences expanding `vevent` up to `last_day` walks."""
+    """An estimate of the dates expanding `vevent` up to `last_day` tries."""
     start = vevent.get("DTSTART")
     if start is None:
         return 0
     first_day = _day_of(start.dt)
-    days = max((last_day - first_day).days + 1, 1)
     cost = _extra_dates(vevent.get("RDATE"))
     for rule in _listed(vevent.get("RRULE")):
-        cost += _rule_cost(rule, days)
+        cost += _rule_cost(rule, first_day, last_day)
     return cost
+
+
+def _rule_cost(rule, first_day, last_day):
+    end_day = _end_day(rule, last_day)
+    days = max((end_day - first_day).days + 1, 1)
+    frequency = str(_first(rule.get("FREQ"))).upper()
+    frequency_seconds = FREQUENCY_SECONDS.get(frequency, 1)
+    interval = _interval(rule)
+    if frequency_seconds < SECONDS_IN_DAY:
+        periods = days * max(SECONDS_IN_DAY // (frequency_seconds * interval), 1)
+    else:
+        periods = (days - 1) // (frequency_seconds // SECONDS_IN_DAY * interval) + 1
+    return periods * _dates_per_period(rule, frequency, frequency_seconds)
+
+
+def _dates_per_period(rule, frequency, frequency_seconds):
+    dates = 1
+    weights = DATES_PER_LISTED_DAY.get(frequency, {})
+    for part, weight in weights.items():
+        values = _listed(rule.get(part))
+        if values:
+            dates *= len(values) * weight
+    dates = min(dates, max(frequency_seconds // SECONDS_IN_DAY, 1))
+    for part, unit_seconds in TIME_OF_DAY_PARTS.items():
+        values = _listed(rule.get(part))
+        if values and unit_seconds < frequency_seconds:
+            dates *= len(values)
+    return dates
+
+
+def _end_day(rule, last_day):
+    until = _first(rule.get("UNTIL"))
+    if until is None:
+        return last_day
+    return min(_day_of(until), last_day)
 
 
 def _extra_dates(rdates):
@@ -45,30 +87,6 @@ def _extra_dates(rdates):
     for rdate in _listed(rdates):
         count += len(getattr(rdate, "dts", [rdate]))
     return count
-
-
-def _rule_cost(rule, days):
-    walked = _occurrences_per_day(rule) * days
-    count = _first(rule.get("COUNT"))
-    if isinstance(count, int) and count < walked:
-        return count
-    return walked
-
-
-def _occurrences_per_day(rule):
-    frequency_seconds = FREQUENCY_SECONDS.get(str(_first(rule.get("FREQ"))).upper(), 1)
-    per_day = _slots_per_day(frequency_seconds, _interval(rule))
-    for part, unit_seconds in TIME_OF_DAY_PARTS.items():
-        values = _listed(rule.get(part))
-        if values and unit_seconds < frequency_seconds:
-            per_day *= len(values)
-    return per_day
-
-
-def _slots_per_day(frequency_seconds, interval):
-    if frequency_seconds >= SECONDS_IN_DAY:
-        return 1
-    return max(SECONDS_IN_DAY // (frequency_seconds * interval), 1)
 
 
 def _interval(rule):
@@ -83,7 +101,7 @@ def _day_of(value):
         return value.date()
     if isinstance(value, date):
         return value
-    raise ValueError("DTSTART is neither a date nor a date-time")
+    raise ValueError("a date is neither a date nor a date-time")
 
 
 def _listed(value):

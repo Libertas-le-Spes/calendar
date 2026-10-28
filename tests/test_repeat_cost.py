@@ -20,42 +20,65 @@ def vevent(start, rule=None, rdates=None):
     return event
 
 
-class TestSeriesCost(unittest.TestCase):
-    def test_an_event_that_does_not_repeat_costs_nothing_to_expand(self):
-        self.assertEqual(repeat_cost.series_cost(vevent(date(2026, 10, 1)), LAST_DAY), 0)
+def cost(start, rule):
+    return repeat_cost.series_cost(vevent(start, rule), LAST_DAY)
 
-    def test_a_daily_series_costs_one_step_per_day_up_to_the_last_day(self):
-        cost = repeat_cost.series_cost(vevent(date(2026, 10, 21), {"FREQ": "DAILY"}), LAST_DAY)
-        self.assertEqual(cost, 10)
 
+class TestSubDailyRules(unittest.TestCase):
     def test_a_series_every_second_costs_every_second_of_every_day(self):
-        start = datetime(2026, 10, 21, tzinfo=timezone.utc)
-        cost = repeat_cost.series_cost(vevent(start, {"FREQ": "SECONDLY"}), LAST_DAY)
-        self.assertEqual(cost, 10 * 86400)
+        self.assertEqual(cost(datetime(2026, 10, 21, tzinfo=timezone.utc), {"FREQ": "SECONDLY"}), 10 * 86400)
 
     def test_an_interval_spreads_a_sub_daily_series_out(self):
-        start = datetime(2026, 10, 30, tzinfo=timezone.utc)
-        cost = repeat_cost.series_cost(vevent(start, {"FREQ": "HOURLY", "INTERVAL": 2}), LAST_DAY)
-        self.assertEqual(cost, 12)
+        self.assertEqual(cost(datetime(2026, 10, 30, tzinfo=timezone.utc), {"FREQ": "HOURLY", "INTERVAL": 2}), 12)
+
+    def test_minutes_listed_on_a_series_every_minute_narrow_it_rather_than_multiply(self):
+        self.assertEqual(cost(datetime(2026, 10, 30, tzinfo=timezone.utc), {"FREQ": "MINUTELY", "BYMINUTE": [0, 30]}), 1440)
+
+    def test_an_unknown_frequency_is_costed_as_every_second(self):
+        self.assertEqual(cost(datetime(2026, 10, 30, tzinfo=timezone.utc), {"FREQ": "MADEUPLY"}), 86400)
+
+
+class TestDailyAndLongerRules(unittest.TestCase):
+    def test_a_daily_series_costs_one_step_per_day_up_to_the_last_day(self):
+        self.assertEqual(cost(date(2026, 10, 21), {"FREQ": "DAILY"}), 10)
+
+    def test_a_yearly_birthday_from_1970_costs_one_step_per_year(self):
+        self.assertEqual(cost(date(1970, 5, 12), {"FREQ": "YEARLY"}), 57)
+
+    def test_a_birthday_that_names_its_month_and_day_stays_cheap(self):
+        rule = {"FREQ": "YEARLY", "BYMONTH": [5], "BYMONTHDAY": [12]}
+        self.assertLess(cost(date(1970, 5, 12), rule), 1000)
+
+    def test_a_weekly_series_costs_its_weeks_times_its_listed_days(self):
+        rule = {"FREQ": "WEEKLY", "BYDAY": ["MO", "TU", "WE", "TH", "FR"]}
+        self.assertEqual(cost(date(2026, 10, 3), rule), 4 * 5)
+
+    def test_listed_days_never_cost_more_than_every_day_of_the_period(self):
+        rule = {"FREQ": "YEARLY", "BYYEARDAY": list(range(1, 367)), "BYMONTHDAY": list(range(1, 32))}
+        self.assertEqual(cost(date(2026, 1, 1), rule), 366)
 
     def test_hours_minutes_and_seconds_listed_on_a_daily_series_multiply_its_cost(self):
         rule = {"FREQ": "DAILY", "BYHOUR": [9, 17], "BYMINUTE": [0, 30], "BYSECOND": [0, 1, 2]}
-        cost = repeat_cost.series_cost(vevent(date(2026, 10, 30), rule), LAST_DAY)
-        self.assertEqual(cost, 12)
+        self.assertEqual(cost(date(2026, 10, 30), rule), 12)
 
-    def test_minutes_listed_on_a_series_every_minute_narrow_it_rather_than_multiply(self):
-        start = datetime(2026, 10, 30, tzinfo=timezone.utc)
-        rule = {"FREQ": "MINUTELY", "BYMINUTE": [0, 30]}
-        self.assertEqual(repeat_cost.series_cost(vevent(start, rule), LAST_DAY), 1440)
 
-    def test_a_count_smaller_than_the_walk_is_the_cost(self):
-        start = datetime(2020, 1, 1, tzinfo=timezone.utc)
-        rule = {"FREQ": "SECONDLY", "COUNT": 5}
-        self.assertEqual(repeat_cost.series_cost(vevent(start, rule), LAST_DAY), 5)
+class TestWhatTheRuleSaysAboutItsEnd(unittest.TestCase):
+    def test_a_count_does_not_lower_the_cost_since_it_limits_the_dates_kept_not_tried(self):
+        rule = {"FREQ": "HOURLY", "COUNT": 1, "BYMONTH": [2], "BYMONTHDAY": [30]}
+        self.assertEqual(cost(datetime(2026, 10, 21, tzinfo=timezone.utc), rule), 10 * 24)
 
-    def test_an_unknown_frequency_is_costed_as_every_second(self):
-        start = datetime(2026, 10, 30, tzinfo=timezone.utc)
-        self.assertEqual(repeat_cost.series_cost(vevent(start, {"FREQ": "MADEUPLY"}), LAST_DAY), 86400)
+    def test_the_walk_stops_at_until(self):
+        rule = {"FREQ": "DAILY", "UNTIL": date(2026, 10, 25)}
+        self.assertEqual(cost(date(2026, 10, 21), rule), 5)
+
+    def test_an_until_after_the_last_day_stops_at_the_last_day(self):
+        rule = {"FREQ": "DAILY", "UNTIL": date(2030, 1, 1)}
+        self.assertEqual(cost(date(2026, 10, 21), rule), 10)
+
+
+class TestTheWholeEvent(unittest.TestCase):
+    def test_an_event_that_does_not_repeat_costs_nothing_to_expand(self):
+        self.assertEqual(repeat_cost.series_cost(vevent(date(2026, 10, 1)), LAST_DAY), 0)
 
     def test_each_extra_date_costs_one_step(self):
         extra = [date(2026, 10, 2), date(2026, 10, 3), date(2026, 10, 4)]
