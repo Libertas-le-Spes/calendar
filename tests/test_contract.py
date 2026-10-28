@@ -1,4 +1,5 @@
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -237,3 +238,23 @@ class TestUsableColor(unittest.TestCase):
     def test_positions_past_the_palette_wrap_around(self):
         position = len(contract.CALENDAR_COLORS) + 2
         self.assertEqual(contract.usable_color("red", position), contract.CALENDAR_COLORS[2])
+
+
+def widget_number(name):
+    source = (Path(__file__).parent.parent / "EventsFile.js").read_text()
+    match = re.search(r"^var %s = ([\d *]+)$" % name, source, re.MULTILINE)
+    product = 1
+    for factor in match.group(1).split("*"):
+        product *= int(factor)
+    return product
+
+
+class TestWidgetAgrees(unittest.TestCase):
+    def test_the_widget_reads_the_same_version(self):
+        self.assertEqual(widget_number("CONTRACT_VERSION"), contract.CONTRACT_VERSION)
+
+    def test_the_widget_refuses_at_the_same_row_ceiling(self):
+        self.assertEqual(widget_number("MAX_EVENT_ROWS"), contract.MAX_EVENT_ROWS)
+
+    def test_the_widget_refuses_at_the_same_size_ceiling(self):
+        self.assertEqual(widget_number("MAX_DOCUMENT_BYTES"), contract.MAX_DOCUMENT_BYTES)

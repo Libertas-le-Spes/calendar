@@ -38,6 +38,11 @@ Item {
   property string snoozeText: ""
 
   property string syncState: "ok"
+  readonly property var syncProblemKeys: ({
+    "version": "sync.versionPanel",
+    "too-large": "sync.tooLargePanel",
+    "stale": "sync.stalePanel"
+  })
   property string setupCommand: ""
   property bool setupCommandCopied: false
 
@@ -189,8 +194,8 @@ Item {
           text: {
             if (root.syncState === "missing")
               return root.tr(root.setupCommandCopied ? "sync.copied" : "sync.missingPanel", [root.setupCommand])
-            if (root.syncState === "version") return root.tr("sync.versionPanel")
-            if (root.syncState === "stale") return root.tr("sync.stalePanel")
+            var problemKey = root.syncProblemKeys[root.syncState]
+            if (problemKey) return root.tr(problemKey)
             if (!root.canWrite) return root.tr("agenda.emptyReadOnly")
             return root.tr(root.showQuickAdd ? "agenda.empty" : "agenda.emptyNoQuickAdd")
           }

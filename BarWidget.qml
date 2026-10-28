@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
+import "EventsFile.js" as EventsFile
 import "Model.js" as Model
 import "Strings.js" as Strings
 
@@ -57,12 +58,7 @@ BarWidget {
   readonly property var verticalLines: clockText.split("\n")
 
   function applyEvents(raw) {
-    var events = []
-    try {
-      var doc = JSON.parse(raw)
-      if (doc && doc.version === 1 && Array.isArray(doc.events)) events = doc.events
-    } catch (error) {}
-    root.allEvents = events
+    root.allEvents = EventsFile.eventsOf(EventsFile.read(raw))
   }
 
   function refresh() {
