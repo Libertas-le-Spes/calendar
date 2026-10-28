@@ -539,5 +539,27 @@ class TestCopiesThatDifferInPlaceDetailsOrReminders(unittest.TestCase):
         self.assertEqual(len(self.written_copies(self.copy(), self.copy())), 1)
 
 
+def writing_client(calendars):
+    client = FakeGws(calendars=calendars)
+    client.can_write = True
+    return client
+
+
+class TestRawEventsKeptOnlyForGuests(unittest.TestCase):
+    def test_without_writing_no_guest_suggestions_are_made(self):
+        with mock.patch.object(cli.suggestions, "guest_suggestions", autospec=True) as suggested:
+            sync_capturing(FakeGws())
+        suggested.assert_not_called()
+
+    def test_with_writing_the_fetched_events_feed_the_guest_suggestions(self):
+        cfg = dict(config.DEFAULTS, write=True)
+        calendars = [{"id": "a@example.com", "name": "Personal", "color": "#f83a22", "writable": True}]
+        written = mock.create_autospec(cli.write_atomic)
+        with mock.patch.object(cli.suggestions, "guest_suggestions", autospec=True, return_value=[]) as suggested, \
+                mock.patch.object(cli, "write_atomic", written), contextlib.redirect_stderr(io.StringIO()):
+            run_quietly(writing_client(calendars), cfg, NOW, "events.json", BOGOTA)
+        self.assertEqual([event["id"] for event in suggested.call_args.args[0]], ["evt1"])
+
+
 if __name__ == "__main__":
     unittest.main()

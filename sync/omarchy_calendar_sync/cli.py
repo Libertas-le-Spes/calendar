@@ -128,6 +128,10 @@ def _is_own(calendar):
     return calendar.get("primary") is True
 
 
+def _writes(cfg, client):
+    return cfg.get("write") is True and getattr(client, "can_write", False) is True
+
+
 def _give_usable_colors(calendars):
     for position, calendar in enumerate(calendars):
         calendar["color"] = colors.usable_color(calendar.get("color"), position)
@@ -169,6 +173,7 @@ def run(client, cfg, now, out_path, local_tz):
         rows = []
         seen = {}
         fetched = []
+        wants_guests = _writes(cfg, client)
         skipped = 0
         budget = RowBudget()
         for calendar in calendars:
@@ -184,7 +189,8 @@ def run(client, cfg, now, out_path, local_tz):
                 skipped += 1
                 continue
             seen = seen_with_these
-            fetched.extend(fresh)
+            if wants_guests:
+                fetched.extend(fresh)
             rows.extend(calendar_rows)
 
         if calendars and skipped == len(calendars):
@@ -204,7 +210,7 @@ def run(client, cfg, now, out_path, local_tz):
     # The panel offers edits only for these. Only when the user turned
     # writing on and the backend can write; otherwise the key is absent.
     writable = []
-    if cfg.get("write") and getattr(client, "can_write", False):
+    if _writes(cfg, client):
         writable = [
             {"id": c["id"], "name": c["name"], "color": c["color"]}
             for c in calendars

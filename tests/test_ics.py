@@ -12,7 +12,7 @@ from unittest import mock
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from omarchy_calendar_sync import cli, config, errors, feed_download, feed_events, feed_worker, feeds, ics, keyring, normalize, worker_process
+from omarchy_calendar_sync import cli, config, errors, feed_download, feed_events, feed_request, feed_worker, feeds, ics, keyring, normalize, worker_process
 from omarchy_calendar_sync.errors import CalendarUnreadable
 from omarchy_calendar_sync.config import DayWindow
 
@@ -692,15 +692,59 @@ class TestTheClientAndItsWorker(unittest.TestCase):
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             c.events(calendar_id, "2026-10-01T00:00:00+00:00", "2026-10-31T00:00:00+00:00")
-        self.assertIn("skipping 2 repeating events in %s" % calendar_id, stdout.getvalue())
+        self.assertIn("skipping 2 entries in %s" % calendar_id, stdout.getvalue())
         self.assertIn("skipping 1 events in %s: they cannot be read" % calendar_id, stdout.getvalue())
 
-    def test_each_feed_gets_a_share_of_the_run_and_never_more_than_the_worker_limit(self):
-        many = []
-        for number in range(8):
-            many.append("https://feeds.example.invalid/%d.ics" % number)
-        self.assertEqual(ics.Ics(many, fetch=feed_returning(FEED), local_tz=SAO_PAULO)._seconds_per_feed(), ics.RUN_SECONDS // 8)
-        self.assertEqual(ics.Ics([URL], fetch=feed_returning(FEED), local_tz=SAO_PAULO)._seconds_per_feed(), ics.WORKER_SECONDS + 15)
+    def run_clock(self, *readings):
+        values = list(readings)
+
+        def clock():
+            return values.pop(0)
+        return clock
+
+    def test_a_worker_gets_its_full_time_early_in_the_run(self):
+        seen = []
+
+        def worker(request, seconds):
+            seen.append((request["seconds"], seconds))
+            return {"events": [], "left_out": 0, "unconvertible": 0}
+
+        c = ics.Ics([URL], fetch=feed_returning(FEED), local_tz=SAO_PAULO, worker=worker, clock=self.run_clock(0, 0, 1))
+        c.events(c.calendars()[0]["id"], "2026-10-01T00:00:00+00:00", "2026-10-31T00:00:00+00:00")
+        limit = ics.WORKER_SECONDS + ics.WORKER_MARGIN_SECONDS
+        self.assertEqual(seen, [(limit - ics.WORKER_MARGIN_SECONDS, limit)])
+
+    def test_a_worker_late_in_the_run_gets_only_what_is_left(self):
+        seen = []
+
+        def worker(request, seconds):
+            seen.append(seconds)
+            return {"events": [], "left_out": 0, "unconvertible": 0}
+
+        c = ics.Ics([URL], fetch=feed_returning(FEED), local_tz=SAO_PAULO, worker=worker, clock=self.run_clock(0, 0, ics.RUN_SECONDS - 30))
+        c.events(c.calendars()[0]["id"], "2026-10-01T00:00:00+00:00", "2026-10-31T00:00:00+00:00")
+        self.assertEqual(seen, [30])
+
+    def test_a_feed_with_no_time_left_to_read_is_skipped_without_starting_a_worker(self):
+        worker = mock.Mock()
+        c = ics.Ics([URL], fetch=feed_returning(FEED), local_tz=SAO_PAULO, worker=worker, clock=self.run_clock(0, 0, ics.RUN_SECONDS - 1))
+        calendar_id = c.calendars()[0]["id"]
+        with self.assertRaises(errors.CalendarUnreadable):
+            c.events(calendar_id, "2026-10-01T00:00:00+00:00", "2026-10-31T00:00:00+00:00")
+        worker.assert_not_called()
+
+    def test_a_feed_with_no_time_left_to_download_is_not_fetched(self):
+        fetched = []
+        c = ics.Ics([URL], fetch=fetched.append, local_tz=SAO_PAULO, worker=in_process, clock=self.run_clock(0, ics.RUN_SECONDS - 1))
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ics.IcsError):
+            c.calendars()
+        self.assertEqual(fetched, [])
+
+    def test_a_feed_body_is_let_go_once_its_events_are_read(self):
+        c = ics.Ics([URL], fetch=feed_returning(FEED), local_tz=SAO_PAULO, worker=worker_answering({"events": [], "left_out": 0, "unconvertible": 0}))
+        calendar_id = c.calendars()[0]["id"]
+        c.events(calendar_id, "2026-10-01T00:00:00+00:00", "2026-10-31T00:00:00+00:00")
+        self.assertEqual(c._bodies, {})
 
     def test_the_feeds_own_name_and_colour_are_read_from_its_header(self):
         body = b"BEGIN:VCALENDAR\r\nX-WR-CALNAME:Made-up team\r\nX-APPLE-CALENDAR-COLOR:#a1b2c3\r\nEND:VCALENDAR\r\n"
@@ -762,21 +806,72 @@ class TestTheWorker(unittest.TestCase):
         self.assertEqual((len(answer["events"]), answer["unconvertible"]), (1, 1))
 
     def test_main_limits_its_own_memory_before_reading_the_request(self):
-        stdin = io.StringIO(json.dumps(self.request(FLOOD_FEED)))
-        stdout = io.StringIO()
-        with mock.patch.object(feed_worker.resource, "setrlimit", autospec=True) as limited, \
-                mock.patch.object(feed_worker.sys, "stdin", stdin), mock.patch.object(feed_worker.sys, "stdout", stdout):
+        order = []
+        request_text = json.dumps(self.request(FLOOD_FEED))
+
+        def read():
+            order.append("read")
+            return request_text
+
+        def limit(*arguments):
+            order.append("limit")
+
+        stdin = mock.Mock()
+        stdin.read.side_effect = read
+
+        with mock.patch.object(feed_worker.resource, "setrlimit", autospec=True, side_effect=limit) as limited, \
+                mock.patch.object(feed_worker.sys, "stdin", stdin), mock.patch.object(feed_worker.sys, "stdout", io.StringIO()):
             feed_worker.main()
         limited.assert_called_once_with(feed_worker.resource.RLIMIT_AS, (feed_worker.WORKER_MEMORY_BYTES, feed_worker.WORKER_MEMORY_BYTES))
-        self.assertIn("events", json.loads(stdout.getvalue()))
+        self.assertEqual(order, ["limit", "read"])
 
     def test_a_zone_is_described_by_name_and_rebuilt_from_it(self):
-        self.assertEqual(feed_worker.zone_from(feed_worker.describe_zone(SAO_PAULO)), SAO_PAULO)
+        self.assertEqual(feed_request.zone_from(feed_request.describe_zone(SAO_PAULO)), SAO_PAULO)
 
     def test_a_fixed_offset_is_described_by_its_seconds(self):
         fixed = timezone(timedelta(hours=2))
-        self.assertEqual(feed_worker.describe_zone(fixed), {"offset_seconds": 7200})
-        self.assertEqual(feed_worker.zone_from({"offset_seconds": 7200}), fixed)
+        self.assertEqual(feed_request.describe_zone(fixed), {"offset_seconds": 7200})
+        self.assertEqual(feed_request.zone_from({"offset_seconds": 7200}), fixed)
+
+    def test_long_text_is_clipped_before_it_leaves_the_worker(self):
+        event = {"summary": "s" * 9000, "description": "d" * 9000, "location": "l" * 9000, "id": "i" * 9000,
+                 "start": {"dateTime": "2026-10-09T09:00:00+00:00"}}
+        clipped = feed_worker.clipped(event)
+        lengths = (len(clipped["summary"]), len(clipped["description"]), len(clipped["location"]), len(clipped["id"]))
+        self.assertEqual(lengths, (501, 8192, 4096, feed_worker.ANSWER_TEXT_LIMIT))
+        self.assertEqual(clipped["start"], {"dateTime": "2026-10-09T09:00:00+00:00"})
+
+    def test_the_answer_is_written_as_utf8_rather_than_escapes(self):
+        stdin = io.StringIO(json.dumps(self.request(FLOOD_FEED)))
+        stdout = io.StringIO()
+        made_up = {"events": [{"summary": "é" * 4}], "left_out": 0, "unconvertible": 0}
+        with mock.patch.object(feed_worker.resource, "setrlimit", autospec=True), \
+                mock.patch.object(feed_worker, "answer", autospec=True, return_value=made_up), \
+                mock.patch.object(feed_worker.sys, "stdin", stdin), mock.patch.object(feed_worker.sys, "stdout", stdout):
+            feed_worker.main()
+        self.assertIn("éééé", stdout.getvalue())
+
+    def test_the_events_answered_are_clipped(self):
+        long_event = {"summary": "s" * 9000, "description": "d" * 9000, "start": {"dateTime": "2026-10-09T09:00:00+00:00"}}
+        with mock.patch.object(feed_worker, "occurrence_to_event", autospec=True, return_value=long_event):
+            answer = feed_worker.answer(self.request(FLOOD_FEED))
+        self.assertEqual((len(answer["events"][0]["summary"]), len(answer["events"][0]["description"])), (501, 8192))
+
+    def test_an_occurrence_that_converts_to_nothing_is_counted_not_answered(self):
+        with mock.patch.object(feed_worker, "occurrence_to_event", autospec=True, return_value=None):
+            answer = feed_worker.answer(self.request(FLOOD_FEED))
+        self.assertEqual((answer["events"], answer["unconvertible"]), ([], 1))
+
+    def test_the_worker_keeps_to_the_time_the_request_gives_it(self):
+        def spin(*arguments):
+            stop = time.monotonic() + 3
+            while time.monotonic() < stop:
+                pass
+
+        request = dict(self.request(FLOOD_FEED), seconds=0.2)
+        with mock.patch.object(feed_worker, "expand_by_series", autospec=True, side_effect=spin):
+            answer = feed_worker.answer(request)
+        self.assertIn("took longer than", answer["problem"])
 
 
 if __name__ == "__main__":

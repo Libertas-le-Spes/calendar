@@ -169,6 +169,15 @@ class TestExpandBySeries(unittest.TestCase):
         found, unreadable = feed_expansion.expand_by_series(icalendar, library, calendar, START, END)
         self.assertEqual((found, unreadable), (["occurrence"], 1))
 
+    def test_a_series_that_fails_is_not_split_from_its_moved_occurrences(self):
+        library = mock.Mock()
+        library.of.return_value.between.side_effect = ValueError("made-up")
+        moved = single("series@example.invalid", date(2026, 10, 22))
+        moved.add("RECURRENCE-ID", date(2026, 10, 21))
+        calendar = calendar_of(vevent("series@example.invalid", {"FREQ": "DAILY"}), moved)
+        found, unreadable = feed_expansion.expand_by_series(icalendar, library, calendar, START, END)
+        self.assertEqual((found, unreadable, library.of.call_count), ([], 1, 1))
+
     def test_a_calendar_at_the_limit_keeps_every_occurrence(self):
         library = self.library_returning(["first", "second"])
         with mock.patch.object(feed_expansion, "EVENTS_PER_CALENDAR", 2):

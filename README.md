@@ -252,8 +252,9 @@ Needs `python-icalendar` 7.2.2 or newer and `python-recurring-ical-events`
 (the setup installs them). Any https or webcal iCal feed works, not only
 Google's. Plain `http` is refused, and so is an address with a user name or
 password in it. A feed has 60 seconds and 16 MB to arrive. It is then read in a
-process of its own, limited to 768 MB and 60 seconds, so a feed that needs more
-costs only itself.
+process of its own, limited to 768 MB and 60 seconds, whose answer the sync reads
+only up to 64 MB, so a feed that needs more costs only itself. All feeds share
+four minutes a run.
 
 The trade: no creating or editing events, and Google refreshes the feed on its
 own schedule so a change can take a while to show up. The feed carries no link
@@ -526,12 +527,16 @@ systemctl --user list-timers omarchy-calendar-sync.timer
 | `skipping keyring feed ics-...: the keyring holds no address for this feed` | The keyring was locked when the sync ran, or the address was removed from it. Unlock it, or run `sync/setup --ics` again |
 | `skipping calendar '...': more than 2000 events in the sync window` | One calendar holds more events than a real calendar would. Exclude it under `calendars.exclude`, or find the event that floods it |
 | `skipping calendar '...': its events need more memory than one feed may use` | The feed is too large or too complex to read within 768 MB. It is skipped; the other feeds update |
-| `skipping N repeating events in ...: they cannot be read or repeat too often to expand` | Those events are left out; the rest of that calendar updates |
-| `skipping an event in ...: it cannot be read` | One occurrence could not be turned into an event, and only it is missing |
+| `skipping N entries in ...: they cannot be read or repeat too often to expand` | Those events are left out; the rest of that calendar updates |
+| `skipping N events in ...: they cannot be read` | Those occurrences could not be turned into events, and only they are missing |
+| `skipping calendar '...': reading the feed took longer than N seconds` | Its process did not answer in time; only that calendar is skipped |
+| `skipping calendar '...': reading the feed ran out of memory or stopped` | Its process was stopped; only that calendar is skipped |
+| `skipping calendar '...': reading the feed gave an answer larger than 67108864 bytes` or `gave no answer` | Its process answered with more than the sync reads, or nothing usable; only that calendar is skipped |
+| `skipping calendar '...': no time was left in this run to read its events` | Earlier feeds used the run's four minutes; it is read on the next run |
 | `config error: ... belongs to another user` | Another user owns your config. Remove it and run `sync/setup` again as yourself |
 | `config error: ... can be changed by other users` | `chmod 600 ~/.config/omarchy/calendar-sync.json` |
 | `skipping calendar '...': its events would make the events file too large` | That calendar alone would take the file past 8,000 rows or 16 MB, often through events that last for months. The other calendars are written |
-| `skipping calendar '...': its events took longer than 60 seconds to read` | A repeating event in it cannot be expanded in reasonable time, for example one whose rule never matches a date. The other calendars are written |
+| `skipping calendar '...': its events took longer than 60 seconds to read` | Something in it cannot be expanded in reasonable time, for example one whose rule never matches a date. The other calendars are written |
 | The panel says the events file is too large to show | Something wrote more than 16 MB or 8,000 rows. The bundled sync never does; check any other writer |
 | `The project ID you specified is already in use` during setup | Fixed in 0.1.1. Google Cloud project ids are unique across all of Google, and older versions hardcoded one. Update the plugin, or pass your own: `PROJECT_ID=something-unique sync/setup` |
 | Clicking an event opens your calendar but not the event | The link resolves only for the Google account the sync authenticated as. If your browser opens it in a profile signed into a different account, Google falls back to the calendar root. Route `google.com/calendar` to the profile holding that account |

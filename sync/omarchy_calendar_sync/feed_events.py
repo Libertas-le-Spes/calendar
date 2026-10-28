@@ -19,7 +19,7 @@ def google_event_url(uid, calendar_id):
     """
     if not calendar_id or not uid.endswith(_GOOGLE_UID_SUFFIX):
         return ""
-    event_id = uid[: -len(_GOOGLE_UID_SUFFIX)]
+    event_id = uid.removesuffix(_GOOGLE_UID_SUFFIX)
     eid = base64.urlsafe_b64encode(("%s %s" % (event_id, calendar_id)).encode())
     return "https://calendar.google.com/calendar/event?eid=" + eid.decode().rstrip("=")
 
@@ -41,7 +41,9 @@ def to_node(value, local_tz):
 
 def _text(component, name):
     value = component.get(name)
-    return str(value) if value is not None else ""
+    if value is None:
+        return ""
+    return str(value)
 
 
 def _own_partstat(component, identity):
@@ -70,7 +72,6 @@ def _popup_reminders(component):
     for alarm in component.walk("VALARM"):
         if str(alarm.get("ACTION") or "").upper() not in ("DISPLAY", "AUDIO"):
             continue
-        # getattr: a malformed TRIGGER must cost one alarm, not the whole sync.
         trigger = alarm.get("TRIGGER")
         related = getattr(trigger, "params", {}).get("RELATED", "START")
         if str(related).upper() != "START":
@@ -100,7 +101,6 @@ def occurrence_to_event(component, local_tz, identity="", calendar_id=""):
     elif isinstance(start_value, datetime):
         end_value = start_value
     else:
-        # RFC 5545: an all-day event without DTEND lasts one day.
         end_value = start_value + timedelta(days=1)
 
     start_node = to_node(start_value, local_tz)
@@ -109,7 +109,6 @@ def occurrence_to_event(component, local_tz, identity="", calendar_id=""):
         return None
 
     uid = _text(component, "UID")
-    cancelled = _text(component, "STATUS").upper() == "CANCELLED"
     return build_event(
         uid=uid,
         start_node=start_node,
@@ -117,9 +116,15 @@ def occurrence_to_event(component, local_tz, identity="", calendar_id=""):
         summary=_text(component, "SUMMARY"),
         location=_text(component, "LOCATION"),
         description=_text(component, "DESCRIPTION"),
-        status="cancelled" if cancelled else "",
+        status=_status(component),
         conference_url=_text(component, "X-GOOGLE-CONFERENCE"),
         partstat=_own_partstat(component, identity),
         reminders=_popup_reminders(component),
         html_link=google_event_url(uid, calendar_id),
     )
+
+
+def _status(component):
+    if _text(component, "STATUS").upper() == "CANCELLED":
+        return "cancelled"
+    return ""

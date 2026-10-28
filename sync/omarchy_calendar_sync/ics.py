@@ -19,15 +19,16 @@ on a machine without python-icalendar and python-recurring-ical-events.
 
 import base64
 import re
+import time
 import urllib.parse
 
 from . import keyring
 from .errors import CalendarUnreadable, FeedProblem, SyncError
 from .feed_download import download
 from .feed_header import feed_header
-from .feed_worker import describe_zone
+from .feed_request import describe_zone
 from .feeds import feed_url, parse_feeds, redact, scrubbed, unsafe_reason
-from .limits import RUN_SECONDS, WORKER_SECONDS
+from .limits import DOWNLOAD_RESERVE_SECONDS, RUN_SECONDS, WORKER_MARGIN_SECONDS, WORKER_SECONDS
 from .localzone import resolve_local_timezone
 from .worker_process import WorkerFailed, run_worker
 
@@ -77,7 +78,7 @@ def _first_given(*choices):
 
 def _report(calendar_id, answer):
     if answer.get("left_out"):
-        print("skipping %d repeating events in %s: they cannot be read or repeat too often to expand" % (answer["left_out"], calendar_id))
+        print("skipping %d entries in %s: they cannot be read or repeat too often to expand" % (answer["left_out"], calendar_id))
     if answer.get("unconvertible"):
         print("skipping %d events in %s: they cannot be read" % (answer["unconvertible"], calendar_id))
 
@@ -107,12 +108,14 @@ class Ics:
     # Feeds are read only.
     can_write = False
 
-    def __init__(self, feeds, identity="", fetch=None, local_tz=None, lookup=keyring.lookup, worker=run_worker):
+    def __init__(self, feeds, identity="", fetch=None, local_tz=None, lookup=keyring.lookup, worker=run_worker, clock=time.monotonic):
         self._feeds, self._refused = parse_feeds(feeds, lookup)
         self._identity = identity
         self._fetch = fetch or download
         self._local_tz = local_tz if local_tz is not None else resolve_local_timezone()
         self._worker = worker
+        self._clock = clock
+        self._deadline = clock() + RUN_SECONDS
         self._bodies = {}
 
     def version(self):
@@ -145,6 +148,7 @@ class Ics:
         for feed in self._feeds:
             url = ""
             try:
+                self._require_time(DOWNLOAD_RESERVE_SECONDS)
                 url = feed.address()
                 body = self._fetch(url)
             except FeedProblem as problem:
@@ -172,7 +176,8 @@ class Ics:
     def events(self, calendar_id, time_min, time_max):
         if calendar_id not in self._bodies:
             raise IcsError("calendar %s was never fetched" % calendar_id)
-        body, google_id = self._bodies[calendar_id]
+        body, google_id = self._bodies.pop(calendar_id)
+        seconds = self._seconds_for_worker()
         request = {
             "body": base64.b64encode(body).decode("ascii"),
             "start": time_min,
@@ -180,9 +185,10 @@ class Ics:
             "zone": describe_zone(self._local_tz),
             "identity": self._identity,
             "google_id": google_id,
+            "seconds": seconds - WORKER_MARGIN_SECONDS,
         }
         try:
-            answer = self._worker(request, self._seconds_per_feed())
+            answer = self._worker(request, seconds)
         except WorkerFailed as failed:
             raise CalendarUnreadable(str(failed)) from None
         if "problem" in answer:
@@ -190,9 +196,15 @@ class Ics:
         _report(calendar_id, answer)
         return answer["events"]
 
-    def _seconds_per_feed(self):
-        feeds = max(len(self._feeds), 1)
-        return min(WORKER_SECONDS + 15, RUN_SECONDS // feeds)
+    def _seconds_for_worker(self):
+        left = self._deadline - self._clock()
+        if left < WORKER_MARGIN_SECONDS * 2:
+            raise CalendarUnreadable("no time was left in this run to read its events")
+        return min(WORKER_SECONDS + WORKER_MARGIN_SECONDS, int(left))
+
+    def _require_time(self, seconds):
+        if self._deadline - self._clock() < seconds:
+            raise FeedProblem("no time was left in this run to download it")
 
     def auth_hint(self, _cfg):
         return (

@@ -4,7 +4,7 @@ Before anything is expanded, each series is costed from its rule. A series
 that would cost too much, or that cannot be read, is left out on its own; a
 plain event outside the window is dropped; and a calendar whose remaining
 events would still cost too much, or land more dates in the window than the
-sync takes, is refused. The expansion itself runs under a time budget.
+sync takes, is refused. All of it runs in the feed's own limited process (feed_worker).
 
 The window is always closed at both ends. Walking forward with no end lets
 an event that lasts a thousand years keep the walk going in small steps for
