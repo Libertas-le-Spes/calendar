@@ -428,7 +428,22 @@ With the panel open:
 | `m` | Join the selected meeting, else the next one |
 | `o` | Open the selected event in Google |
 | `w` | Toggle the week start |
+| `Tab` `Shift+Tab` | Next / previous button, field or switch; a ring shows which |
+| `Enter` `Space` | Press the button that has the ring |
+| `←` `→` / `↑` `↓` on a button | Next / previous button, like Tab. On the month grid they move the day, and on the agenda list `↑` `↓` step through the day's events |
+| `Ctrl+Tab` `Ctrl+Shift+Tab` | Next / previous bar panel, except while the event form is open |
 | `Esc` | Back out one step: dialog, form, details, selection, then the panel |
+
+To open the panel from the keyboard, bind a key to
+`omarchy-shell shell toggle tmn73.calendar`. It opens on the monitor you are
+on, ready for Tab and the arrows. Omarchy's own "Calendar" key,
+`SUPER + CTRL + ALT + D`, opens its built-in clock instead, so replace it in
+`~/.config/hypr/bindings.lua`:
+
+```lua
+hl.unbind("SUPER + CTRL + ALT + D")
+o.bind("SUPER + CTRL + ALT + D", "Calendar", "omarchy-shell shell toggle tmn73.calendar")
+```
 
 `omarchy-shell tmn73.calendar join` joins the next meeting from anywhere, for
 a Hyprland binding.

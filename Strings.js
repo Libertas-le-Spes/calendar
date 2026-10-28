@@ -115,6 +115,8 @@ var STRINGS = {
     "keys.year": "year",
     "keys.today": "today",
     "keys.back": "back",
+    "keys.walk": "next button (⇧ back)",
+    "keys.panels": "next bar panel",
 
     "quick.label": "Quick add",
     "quick.placeholder": "New… e.g. call with Ana tomorrow 2pm for 45m",
@@ -469,6 +471,8 @@ var STRINGS = {
     "keys.year": "ano",
     "keys.today": "hoje",
     "keys.back": "voltar",
+    "keys.walk": "próximo botão (⇧ volta)",
+    "keys.panels": "próximo painel da barra",
 
     "quick.label": "Criar evento rápido",
     "quick.placeholder": "Novo… ex.: call com Ana amanhã 14h por 45min",
