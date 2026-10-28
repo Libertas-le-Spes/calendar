@@ -343,7 +343,10 @@ class TestFeedSize(unittest.TestCase):
         self.assertEqual(stream.read1.call_args_list, [mock.call(feed_download.CHUNK_BYTES), mock.call(feed_download.CHUNK_BYTES)])
 
 
-class NeverFinishing:
+class Trickling:
+    def __init__(self):
+        self.left = 30
+
     def __enter__(self):
         return self
 
@@ -351,13 +354,16 @@ class NeverFinishing:
         return False
 
     def read1(self, amount):
-        time.sleep(30)
+        if self.left == 0:
+            return b""
+        self.left -= 1
+        time.sleep(0.1)
         return b"x"
 
 
 class TestFeedDeadline(unittest.TestCase):
     def test_a_feed_still_arriving_when_its_time_is_up_is_refused(self):
-        with mock.patch.object(feed_download.web, "open_public", return_value=NeverFinishing()), \
+        with mock.patch.object(feed_download.web, "open_public", return_value=Trickling()), \
                 mock.patch.object(feed_download, "FEED_SECONDS", 0.2):
             started = time.monotonic()
             with self.assertRaises(errors.FeedProblem) as raised:
