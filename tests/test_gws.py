@@ -492,15 +492,15 @@ class TestCredentialRequests(unittest.TestCase):
         response = mock.MagicMock()
         response.__enter__.return_value.status = 200
         response.__enter__.return_value.read.return_value = b"{}"
-        with mock.patch.object(gws.web, "open_with_credential", return_value=response) as opened, \
-                mock.patch.object(gws.web, "open_public") as public:
+        with mock.patch.object(gws.web, "open_with_credential", autospec=True, return_value=response) as opened, \
+                mock.patch.object(gws.web, "open_public", autospec=True) as public:
             gws._https("POST", gws.TOKEN_URL, {"Content-Type": "application/x-www-form-urlencoded"}, b"made-up")
         opened.assert_called_once()
         self.assertEqual(opened.call_args.args[0].full_url, gws.TOKEN_URL)
         public.assert_not_called()
 
     def test_a_refused_redirect_is_reported_as_google_unreachable(self):
-        with mock.patch.object(gws.web, "open_with_credential", side_effect=gws.web.RedirectRefused("redirected")):
+        with mock.patch.object(gws.web, "open_with_credential", autospec=True, side_effect=gws.web.RedirectRefused("redirected")):
             with self.assertRaises(gws.GwsApiError):
                 gws._https("GET", gws.CALENDAR_API, {}, None)
 
@@ -520,6 +520,15 @@ class TestGwsTimeout(unittest.TestCase):
 
 
 class TestCalendarListPages(unittest.TestCase):
+    def test_a_calendar_list_that_never_ends_stops_at_the_page_limit(self):
+        looping = []
+        for _ in range(gws.MAX_PAGES):
+            looping.append((200, json.dumps({"items": [], "nextPageToken": "same-token-forever"})))
+        client, _, http = signed_in(looping)
+        with self.assertRaises(gws.GwsApiError):
+            client.calendars()
+        self.assertEqual(len(http.api_calls()), gws.MAX_PAGES)
+
     def test_every_page_of_the_calendar_list_is_read(self):
         first = (200, json.dumps({"items": [{"id": "a@example.com", "summary": "A"}], "nextPageToken": "page2"}))
         second = (200, json.dumps({"items": [{"id": "b@example.com", "summary": "B"}]}))

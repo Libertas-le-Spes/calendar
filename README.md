@@ -495,7 +495,7 @@ would walk more than 200,000 dates: its periods up to the window's end or
 its UNTIL, times the dates each period can hold. A yearly birthday from 1970
 walks 57. A calendar whose repeats take longer than 10 seconds to expand,
 that holds more than 2,000 events in the window, or whose rows would take the
-events file past 8,000 rows or 16 MB is skipped. The journal names the calendar in each case, and the other
+events file past 8,000 rows or 16 MB (less 1 MB kept for the file's other parts) is skipped. The journal names the calendar in each case, and the other
 calendars still update. A run that takes longer than 5 minutes is stopped.
 
 ## Troubleshooting
@@ -517,6 +517,7 @@ systemctl --user list-timers omarchy-calendar-sync.timer
 | The panel says "No calendar synced yet" | The events file does not exist. The sync has never completed |
 | The panel says the calendar may be out of date | The file exists but `syncedAt` is old. Check the journal above |
 | An event shows up twice | Two of your calendars both carry it. Hide one in settings. The sync drops a copy that says the same as the first one, or any copy of an event in your primary calendar. Copies that differ are both shown, so no calendar can hide or replace another's event |
+| `config error: ... is in a folder other users can change` | `~/.config/omarchy` can be written by others, so the config could be swapped. `chmod go-w ~/.config/omarchy` |
 | `config error: ... holds feed addresses that other users can read` | The config is readable by other users. `chmod 600 ~/.config/omarchy/calendar-sync.json`, or run `sync/setup --ics` to move the addresses into your keyring |
 | `skipping keyring feed ics-...: the keyring holds no address for this feed` | The keyring was locked when the sync ran, or the address was removed from it. Unlock it, or run `sync/setup --ics` again |
 | `skipping calendar '...': more than 2000 events in the sync window` | One calendar holds more events than a real calendar would. Exclude it under `calendars.exclude`, or find the event that floods it |

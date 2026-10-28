@@ -36,20 +36,60 @@ DATES_PER_LISTED_DAY = {
 
 
 def series_cost(vevent, last_day):
-    """An estimate of the dates expanding `vevent` up to `last_day` tries."""
-    start = vevent.get("DTSTART")
-    if start is None:
-        return 0
-    first_day = _day_of(start.dt)
+    """An estimate of the dates expanding `vevent` up to `last_day` tries.
+
+    Raises ValueError for an event whose dates or rule cannot be read.
+    """
+    first_day = _start_day(vevent)
     cost = _extra_dates(vevent.get("RDATE"))
     for rule in _listed(vevent.get("RRULE")):
-        cost += _rule_cost(rule, first_day, last_day)
+        cost += _rule_dates(rule, first_day, last_day)
     return cost
 
 
-def _rule_cost(rule, first_day, last_day):
+def window_dates(vevent, window_first, window_last):
+    """An estimate of the dates `vevent` lands on between the two days."""
+    first_day = _start_day(vevent)
+    rules = _listed(vevent.get("RRULE"))
+    dates = _extra_dates(vevent.get("RDATE"))
+    if not rules:
+        return dates + 1
+    from_day = max(first_day, window_first)
+    for rule in rules:
+        dates += _rule_dates(rule, from_day, window_last)
+    return dates
+
+
+def is_single(vevent):
+    """True for an event that neither repeats nor changes one occurrence of a series."""
+    for name in ("RRULE", "RDATE", "RECURRENCE-ID"):
+        if vevent.get(name) is not None:
+            return False
+    return True
+
+
+def touches(vevent, window_first, window_last):
+    """True when a single event lasts into the days between the two."""
+    first_day = _start_day(vevent)
+    end = vevent.get("DTEND")
+    last_day = first_day
+    if end is not None:
+        last_day = _day_of(end.dt)
+    return first_day <= window_last and last_day >= window_first
+
+
+def _start_day(vevent):
+    start = vevent.get("DTSTART")
+    if start is None:
+        raise ValueError("an event has no start")
+    return _day_of(start.dt)
+
+
+def _rule_dates(rule, from_day, last_day):
     end_day = _end_day(rule, last_day)
-    days = max((end_day - first_day).days + 1, 1)
+    if end_day < from_day:
+        return 0
+    days = (end_day - from_day).days + 1
     frequency = str(_first(rule.get("FREQ"))).upper()
     frequency_seconds = FREQUENCY_SECONDS.get(frequency, 1)
     interval = _interval(rule)
@@ -91,9 +131,11 @@ def _extra_dates(rdates):
 
 def _interval(rule):
     interval = _first(rule.get("INTERVAL"))
+    if interval is None:
+        return 1
     if isinstance(interval, int) and interval > 0:
         return interval
-    return 1
+    raise ValueError("a repeat rule's interval must be a positive whole number")
 
 
 def _day_of(value):

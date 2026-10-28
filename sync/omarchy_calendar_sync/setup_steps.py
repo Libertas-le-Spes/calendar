@@ -58,22 +58,47 @@ def read_config(path):
 
 
 def write_private(path, config):
-    """Replace `path` with `config`, readable and writable by the user alone."""
+    """Replace `path` with `config`, readable and writable by the user alone.
+
+    The new file is created fresh, never through a link someone left in
+    its place, and removed again if writing it fails.
+    """
     partial = str(path) + ".partial"
-    handle = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    os.fchmod(handle, 0o600)
-    with os.fdopen(handle, "w") as stream:
-        stream.write(json.dumps(config, indent=2) + "\n")
-    os.replace(partial, path)
+    _remove(partial)
+    handle = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        os.fchmod(handle, 0o600)
+        with os.fdopen(handle, "w") as stream:
+            stream.write(json.dumps(config, indent=2) + "\n")
+        os.replace(partial, path)
+    except BaseException:
+        _remove(partial)
+        raise
 
 
-def write_ics_candidate(config_path, candidate, identity, addresses=None, run=subprocess.run):
-    """The config setup --ics tests before it replaces the current one."""
+def _remove(path):
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+
+
+KEYRING_REFUSED = 3
+
+
+def write_ics_candidate(config_path, candidate, identity, plain_allowed="no", addresses=None, run=subprocess.run):
+    """The config setup --ics tests before it replaces the current one.
+
+    When the keyring refuses an address, nothing is written and the step
+    exits with KEYRING_REFUSED, so setup can ask before an address goes
+    into the config file instead.
+    """
     urls = _given_addresses(addresses)
     entries = store_in_keyring(urls, run)
+    if entries is None and plain_allowed != "yes":
+        raise SystemExit(KEYRING_REFUSED)
     if entries is None:
-        print("  The keyring did not take the addresses, so they stay in the config file,")
-        print("  readable by you alone.")
+        print("  The addresses stay in the config file, readable by you alone.")
         entries = plain_entries(urls)
     else:
         print("  The addresses are in your keyring; the config names them by id.")

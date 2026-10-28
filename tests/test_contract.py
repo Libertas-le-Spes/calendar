@@ -148,9 +148,6 @@ class TestHttpsUrl(unittest.TestCase):
             self.assertFalse(contract.is_https_url(bad), bad)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 LINK_FIELDS = ("meetingUrl", "eventUrl")
 
@@ -270,3 +267,19 @@ class TestWidgetAgrees(unittest.TestCase):
 
     def test_the_widget_refuses_at_the_same_size_ceiling(self):
         self.assertEqual(widget_number("MAX_DOCUMENT_BYTES"), contract.MAX_DOCUMENT_BYTES)
+
+
+class TestWrittenSize(unittest.TestCase):
+    def test_rows_are_measured_as_the_file_writes_them(self):
+        rows = [sound_row(title="Made-up é")]
+        expected = len(contract.serialized({"events": rows}).encode("utf-8"))
+        self.assertEqual(contract.written_size(rows), expected)
+
+    def test_the_written_document_uses_the_same_serializer(self):
+        doc = document_with([sound_row()])
+        text, _ = contract.checked(doc)
+        self.assertEqual(text, contract.serialized(doc))
+
+
+if __name__ == "__main__":
+    unittest.main()

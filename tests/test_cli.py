@@ -298,9 +298,6 @@ class TestWritableCalendars(unittest.TestCase):
         self.assertIs(config.DEFAULTS["write"], False)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class CrowdedCalendarGws(FakeGws):
     def events(self, calendar_id, time_min, time_max):
@@ -504,3 +501,44 @@ class TestFloodedCalendar(unittest.TestCase):
         with mock.patch.object(contract, "MAX_EVENT_ROWS", 10):
             _, written, _ = sync_capturing(FakeGws(calendars=self.CALENDARS, events=copies))
         self.assertEqual([row["id"] for row in written_rows(written)], ["quiet-copy"])
+
+
+class TestCopiesThatDifferOnlyInWhereOrWhen(unittest.TestCase):
+    START = "2026-08-10T19:15:00-05:00"
+    CALENDARS = [
+        {"id": "aaa@example.com", "name": "Aaa made-up", "color": "#f83a22"},
+        {"id": "team@example.com", "name": "Team", "color": "#7bd148"},
+    ]
+
+    def copy(self, **changes):
+        event = gevent("shared@google.com", self.START, "Made-up review")
+        event.update(changes)
+        return event
+
+    def written_copies(self, first, second):
+        copies = {"aaa@example.com": [first], "team@example.com": [second]}
+        _, written, _ = sync_capturing(FakeGws(calendars=self.CALENDARS, events=copies))
+        return written_rows(written)
+
+    def test_a_copy_with_another_location_is_kept_beside_the_real_one(self):
+        rows = self.written_copies(self.copy(location="Made-up other building"), self.copy(location="Made-up room 4"))
+        locations = set()
+        for row in rows:
+            locations.add(row["location"])
+        self.assertEqual(locations, {"Made-up other building", "Made-up room 4"})
+
+    def test_a_copy_with_another_description_is_kept_beside_the_real_one(self):
+        rows = self.written_copies(self.copy(description="Made-up: see https://evil.example.invalid"), self.copy(description="Agenda"))
+        self.assertEqual(len(rows), 2)
+
+    def test_a_copy_without_the_reminders_is_kept_beside_the_real_one(self):
+        reminded = {"useDefault": False, "overrides": [{"method": "popup", "minutes": 10}]}
+        rows = self.written_copies(self.copy(reminders={"useDefault": False, "overrides": []}), self.copy(reminders=reminded))
+        self.assertEqual(len(rows), 2)
+
+    def test_an_identical_copy_is_still_listed_once(self):
+        self.assertEqual(len(self.written_copies(self.copy(), self.copy())), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,8 +1,10 @@
 """The occurrences of one parsed feed inside the sync window, at a bounded cost.
 
-A repeating event whose expansion would cost too much is left out before
-anything is expanded, and a calendar whose events together would still cost
-too much, or that holds more events than the sync takes, is refused.
+Before anything is expanded, each series is costed from its rule. A series
+that would cost too much, or that cannot be read, is left out on its own; a
+plain event outside the window is dropped; and a calendar whose remaining
+events would still cost too much, or land more dates in the window than the
+sync takes, is refused. The expansion itself runs under a time budget.
 
 The window is always closed at both ends. Walking forward with no end lets
 an event that lasts a thousand years keep the walk going in small steps for
@@ -11,22 +13,28 @@ as long as it lasts.
 
 from .errors import CalendarUnreadable, TooManyEvents
 from .limits import EVENTS_PER_CALENDAR, EXPANSION_SECONDS, REPEAT_STEPS_PER_CALENDAR, REPEAT_STEPS_PER_SERIES
-from .repeat_cost import series_cost
+from .repeat_cost import is_single, series_cost, touches, window_dates
 from .time_budget import TimeBudgetSpent, time_budget
 
 
-def affordable_calendar(icalendar, calendar, last_day):
-    """`calendar` without its costly series, and how many series were left out."""
-    costs = _series_costs(calendar, last_day)
-    costly = _costly_series(costs)
-    if _total_cost(costs, costly) > REPEAT_STEPS_PER_CALENDAR:
-        raise CalendarUnreadable("its repeating events would take too long to expand")
+class _Series:
+    def __init__(self):
+        self.cost = 0
+        self.dates = 0
+        self.readable = True
+
+
+def affordable_calendar(icalendar, calendar, first_day, last_day):
+    """`calendar` with only what is worth expanding, and how many series were left out."""
+    series = _weigh(calendar, first_day, last_day)
+    left_out = _left_out_keys(series)
+    _refuse_when_too_much(series, left_out)
     trimmed = icalendar.Calendar()
     trimmed.update(calendar)
     for component in calendar.subcomponents:
-        if not _left_out(component, costly):
+        if _kept(component, left_out, first_day, last_day):
             trimmed.add_component(component)
-    return trimmed, len(costly)
+    return trimmed, len(left_out)
 
 
 def occurrences_in_window(rie, calendar, start, end):
@@ -41,32 +49,58 @@ def occurrences_in_window(rie, calendar, start, end):
     return found
 
 
-def _series_costs(calendar, last_day):
-    costs = {}
+def _weigh(calendar, first_day, last_day):
+    series = {}
     for vevent in calendar.walk("VEVENT"):
-        key = _series_key(vevent)
-        costs[key] = costs.get(key, 0) + series_cost(vevent, last_day)
-    return costs
+        weight = series.setdefault(_series_key(vevent), _Series())
+        _add_weight(weight, vevent, first_day, last_day)
+    return series
 
 
-def _costly_series(costs):
-    costly = set()
-    for key, cost in costs.items():
-        if cost > REPEAT_STEPS_PER_SERIES:
-            costly.add(key)
-    return costly
+def _add_weight(weight, vevent, first_day, last_day):
+    try:
+        if is_single(vevent) and not touches(vevent, first_day, last_day):
+            return
+        weight.cost += series_cost(vevent, last_day)
+        weight.dates += window_dates(vevent, first_day, last_day)
+    except Exception:
+        weight.readable = False
 
 
-def _total_cost(costs, costly):
-    total = 0
-    for key, cost in costs.items():
-        if key not in costly:
-            total += cost
-    return total
+def _left_out_keys(series):
+    left_out = set()
+    for key, weight in series.items():
+        if not weight.readable or weight.cost > REPEAT_STEPS_PER_SERIES:
+            left_out.add(key)
+    return left_out
 
 
-def _left_out(component, costly):
-    return component.name == "VEVENT" and _series_key(component) in costly
+def _refuse_when_too_much(series, left_out):
+    cost = 0
+    dates = 0
+    for key, weight in series.items():
+        if key not in left_out:
+            cost += weight.cost
+            dates += weight.dates
+    if cost > REPEAT_STEPS_PER_CALENDAR:
+        raise CalendarUnreadable("its repeating events would take too long to expand")
+    if dates > EVENTS_PER_CALENDAR:
+        raise TooManyEvents()
+
+
+def _kept(component, left_out, first_day, last_day):
+    if component.name != "VEVENT":
+        return True
+    if _series_key(component) in left_out:
+        return False
+    return not is_single(component) or _touches_or_unreadable(component, first_day, last_day)
+
+
+def _touches_or_unreadable(component, first_day, last_day):
+    try:
+        return touches(component, first_day, last_day)
+    except Exception:
+        return False
 
 
 def _series_key(vevent):

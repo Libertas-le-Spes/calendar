@@ -23,12 +23,14 @@ import urllib.parse
 from datetime import date, datetime, timedelta
 
 from . import keyring
-from .errors import CalendarUnreadable, FeedProblem, SyncError
+from .errors import CalendarUnreadable, FeedProblem, FeedTooLarge, SyncError
 from .feed_download import download
 from .feed_expansion import affordable_calendar, occurrences_in_window
 from .feeds import feed_url, parse_feeds, redact, scrubbed, unsafe_reason
+from .limits import PARSE_SECONDS, TOTAL_FEED_BYTES
 from .localzone import resolve_local_timezone
 from .resources import build_event
+from .time_budget import TimeBudgetSpent, time_budget
 
 MINIMUM_ICALENDAR = (7, 2, 2)
 
@@ -185,6 +187,14 @@ def occurrence_to_event(component, local_tz, identity="", calendar_id=""):
     )
 
 
+def _parse(icalendar, body):
+    try:
+        with time_budget(PARSE_SECONDS):
+            return icalendar.Calendar.from_ical(body)
+    except TimeBudgetSpent:
+        raise FeedProblem("the feed took longer than %d seconds to read" % PARSE_SECONDS) from None
+
+
 def _first_given(*choices):
     for choice in choices:
         if choice:
@@ -224,6 +234,7 @@ class Ics:
         self._local_tz = local_tz if local_tz is not None else resolve_local_timezone()
         # Feed id -> (parsed calendar, Google calendar id or blank).
         self._parsed = {}
+        self._bytes_read = 0
 
     def version(self):
         icalendar, _rie = _load_libs()
@@ -253,12 +264,13 @@ class Ics:
         failures = []
         for url in self._refused:
             failures.append(_skip(redact(url), unsafe_reason(url), url))
-        for position, feed in enumerate(self._feeds):
+        for feed in self._feeds:
             url = ""
             try:
                 url = feed.address()
                 body = self._fetch(url)
-                calendar = icalendar.Calendar.from_ical(body)
+                self._take_bytes(len(body))
+                calendar = _parse(icalendar, body)
             except FeedProblem as problem:
                 failures.append(_skip(feed.label(), str(problem), url))
                 continue
@@ -281,6 +293,11 @@ class Ics:
             raise IcsError("; ".join(failures))
         return found
 
+    def _take_bytes(self, size):
+        if self._bytes_read + size > TOTAL_FEED_BYTES:
+            raise FeedTooLarge("the feeds together are larger than %d bytes" % TOTAL_FEED_BYTES)
+        self._bytes_read += size
+
     def events(self, calendar_id, time_min, time_max):
         icalendar, rie = _load_libs()
         if calendar_id not in self._parsed:
@@ -289,10 +306,10 @@ class Ics:
 
         start = datetime.fromisoformat(time_min)
         end = datetime.fromisoformat(time_max)
-        affordable, left_out = affordable_calendar(icalendar, calendar, end.date())
-        if left_out:
-            print("skipping %d repeating events in %s: they repeat too often to expand" % (left_out, calendar_id))
         try:
+            affordable, left_out = affordable_calendar(icalendar, calendar, start.date(), end.date())
+            if left_out:
+                print("skipping %d repeating events in %s: they cannot be read or repeat too often to expand" % (left_out, calendar_id))
             occurrences = occurrences_in_window(rie, affordable, start, end)
         except CalendarUnreadable:
             raise
@@ -301,10 +318,16 @@ class Ics:
 
         events = []
         for component in occurrences:
-            event = occurrence_to_event(component, self._local_tz, self._identity, google_id)
+            event = self._event_or_none(component, google_id)
             if event is not None:
                 events.append(event)
         return events
+
+    def _event_or_none(self, component, google_id):
+        try:
+            return occurrence_to_event(component, self._local_tz, self._identity, google_id)
+        except Exception:
+            return None
 
     def auth_hint(self, _cfg):
         return (

@@ -312,3 +312,13 @@ test('guestLabel puts the address first, so a long name can only cut itself off'
 test('guestLabel is the address alone when there is no name', () => {
   assert.equal(Model.guestLabel({ email: 'made-up@example.invalid', name: '  ' }), 'made-up@example.invalid')
 })
+
+test('meetingHost names nothing for a host too long to show whole', () => {
+  const lookalike = 'https://meet.google.com.' + 'a'.repeat(30) + '.evil.example/abc'
+  assert.equal(Model.meetingHost(lookalike), '')
+})
+
+test('meetingHost names a host up to the longest it shows', () => {
+  const host = 'a'.repeat(Model.LONGEST_SHOWN_HOST - '.example'.length) + '.example'
+  assert.equal(Model.meetingHost('https://' + host + '/room'), host)
+})

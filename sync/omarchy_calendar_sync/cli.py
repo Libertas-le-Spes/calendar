@@ -1,6 +1,7 @@
 """Entry point. Orchestrates config, a backend, normalization, and the write."""
 
 import argparse
+import json
 import os
 import sys
 import tempfile
@@ -67,7 +68,8 @@ def _drop_duplicates(gevents, seen, calendar):
     """Filter copies of events seen in an earlier calendar. Mutates `seen`.
 
     The primary calendar goes first and the rest follow by name. A later
-    copy is left out when it says the same as the first one, or when the
+    copy is left out when it says the same as the first one (title, end,
+    link, location, description and reminders), or when the
     first came from the primary calendar. A copy that differs from one in
     any other calendar is kept, so no calendar can hide or replace an event
     that another calendar shows. Write access proves nothing here: anyone
@@ -95,10 +97,14 @@ def _covered_by(first, gevent):
 
 
 def _content(gevent):
+    """Everything about a copy the user would see or be reminded by."""
     return (
         _text_of(gevent, "summary"),
         _end_of(gevent),
         normalize.meeting_url(gevent),
+        _text_of(gevent, "location"),
+        _text_of(gevent, "description"),
+        json.dumps(gevent.get("reminders"), sort_keys=True),
     )
 
 

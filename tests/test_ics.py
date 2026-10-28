@@ -4,6 +4,7 @@ from datetime import date
 import base64
 import contextlib
 import io
+import json
 import time
 import urllib.error
 import unittest
@@ -306,9 +307,6 @@ class TestBackendSelection(unittest.TestCase):
         self.assertFalse(built.can_write)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class FakeStream:
     def __init__(self, chunks):
@@ -610,3 +608,102 @@ class TestSkipReasonsPassThrough(unittest.TestCase):
             with self.assertRaises(CalendarUnreadable) as raised:
                 c.events(calendar_id, "2026-10-01T00:00:00+00:00", "2026-10-31T00:00:00+00:00")
         self.assertEqual(str(raised.exception), "its events took longer than 10 seconds to expand")
+
+
+GOOD_FEED_URL = "https://feeds.example.invalid/good.ics"
+BAD_FEED_URL = "https://feeds.example.invalid/bad.ics"
+GOOD_BODY = (
+    "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//made up//EN\r\n"
+    "BEGIN:VEVENT\r\nUID:good@example.invalid\r\nDTSTART:20261009T090000Z\r\nDTEND:20261009T100000Z\r\nSUMMARY:Made-up good\r\nEND:VEVENT\r\n"
+    "END:VCALENDAR\r\n"
+).encode()
+
+
+def bad_feed(event_lines):
+    return (
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//made up//EN\r\nBEGIN:VEVENT\r\nUID:bad@example.invalid\r\nSUMMARY:Made-up bad\r\n"
+        + event_lines + "END:VEVENT\r\nEND:VCALENDAR\r\n"
+    ).encode()
+
+
+class TestOneMalformedEvent(unittest.TestCase):
+    VARIANTS = {
+        "a start that is a time of day": "DTSTART;VALUE=TIME:090000\r\nRRULE:FREQ=DAILY\r\n",
+        "a start that is a period": "DTSTART;VALUE=PERIOD:20261009T090000Z/PT1H\r\nRRULE:FREQ=DAILY\r\n",
+        "a start that is not a date": "DTSTART:notadate\r\nRRULE:FREQ=DAILY\r\n",
+        "an until that is not a date": "DTSTART:20261009T090000Z\r\nRRULE:FREQ=DAILY;UNTIL=zzz\r\n",
+        "an interval of zero": "DTSTART:20261009T090000Z\r\nRRULE:FREQ=DAILY;INTERVAL=0\r\n",
+        "a duration too long to add": "DTSTART:20261009T090000Z\r\nDURATION:P999999999W\r\n",
+    }
+
+    def sync_with(self, event_lines):
+        def fetch(url):
+            if url == BAD_FEED_URL:
+                return bad_feed(event_lines)
+            return GOOD_BODY
+
+        source = ics.Ics([BAD_FEED_URL, GOOD_FEED_URL], fetch=fetch, local_tz=SAO_PAULO)
+        written = mock.create_autospec(cli.write_atomic)
+        with mock.patch.object(cli, "write_atomic", written), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            code = cli.run(source, config.DEFAULTS, NOW, "events.json", SAO_PAULO)
+        return code, written
+
+    def test_the_other_feed_is_still_written_whatever_is_wrong_with_the_event(self):
+        for name, lines in self.VARIANTS.items():
+            with self.subTest(variant=name):
+                code, written = self.sync_with(lines)
+                self.assertEqual(code, cli.EXIT_OK)
+                titles = set()
+                for row in json.loads(written.call_args.args[1])["events"]:
+                    titles.add(row["title"])
+                self.assertIn("Made-up good", titles)
+                self.assertNotIn("Made-up bad", titles)
+
+
+class TestFeedsTogether(unittest.TestCase):
+    def test_a_feed_that_would_take_all_feeds_past_the_total_is_skipped(self):
+        def fetch(url):
+            return GOOD_BODY
+
+        source = ics.Ics([BAD_FEED_URL, GOOD_FEED_URL], fetch=fetch, local_tz=SAO_PAULO)
+        stdout = io.StringIO()
+        with mock.patch.object(ics, "TOTAL_FEED_BYTES", len(GOOD_BODY) + 1), contextlib.redirect_stdout(stdout):
+            calendars = source.calendars()
+        self.assertEqual(len(calendars), 1)
+        self.assertIn("the feeds together are larger than", stdout.getvalue())
+
+    def test_a_feed_that_takes_too_long_to_read_is_skipped(self):
+        def slow_parse(body):
+            time.sleep(5)
+
+        library = mock.Mock()
+        library.Calendar.from_ical.side_effect = slow_parse
+        with mock.patch.object(ics, "PARSE_SECONDS", 0.2):
+            with self.assertRaises(errors.FeedProblem):
+                ics._parse(library, b"made-up")
+
+
+
+class TestOneOccurrenceThatCannotBeConverted(unittest.TestCase):
+    def test_the_other_occurrences_are_still_returned(self):
+        c = client()
+        calendar_id = c.calendars()[0]["id"]
+        real = ics.occurrence_to_event
+
+        def convert(component, *rest):
+            if str(component.get("SUMMARY")) == "Standup":
+                raise OverflowError("made-up")
+            return real(component, *rest)
+
+        with mock.patch.object(ics, "occurrence_to_event", side_effect=convert):
+            found = c.events(calendar_id, "2026-09-01T00:00:00+00:00", "2026-11-30T00:00:00+00:00")
+        titles = set()
+        for event in found:
+            titles.add(event["summary"])
+        self.assertNotIn("Standup", titles)
+        self.assertNotEqual(titles, set())
+
+
+if __name__ == "__main__":
+    unittest.main()

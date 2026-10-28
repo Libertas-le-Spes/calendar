@@ -228,3 +228,18 @@ test('notificationArg keeps option-looking text as text', () => {
   assert.equal(Model.notificationArg('Standup in 5 min'), 'Standup in 5 min')
   assert.equal(Model.notificationArg(''), '')
 })
+
+test('reminderBody: a room wins over the host of a link to a service it does not know', () => {
+  const event_ = event({ meetingUrl: 'https://intranet.example.invalid/room', location: 'Room 4' })
+  assert.equal(Model.reminderBody(event_, START - 10 * MIN, 'en', clock, weekday), '13:00–13:45 · Room 4')
+})
+
+test('reminderBody: a known service wins over the room', () => {
+  const event_ = event({ meetingUrl: 'https://meet.google.com/abc-defg-hij', location: 'Room 4' })
+  assert.equal(Model.reminderBody(event_, START - 10 * MIN, 'en', clock, weekday), '13:00–13:45 · Google Meet')
+})
+
+test('reminderBody: with no room, the host of the link is named', () => {
+  const event_ = event({ meetingUrl: 'https://intranet.example.invalid/room' })
+  assert.equal(Model.reminderBody(event_, START - 10 * MIN, 'en', clock, weekday), '13:00–13:45 · intranet.example.invalid')
+})

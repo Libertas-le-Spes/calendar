@@ -1,5 +1,6 @@
 import contextlib
 import io
+import os
 import subprocess
 import unittest
 from unittest import mock
@@ -62,9 +63,9 @@ class TestForgetUnused(unittest.TestCase):
 class TestWriteGws(unittest.TestCase):
     def test_switching_to_google_drops_the_feeds_from_the_config_and_the_keyring(self):
         old = {"backend": "ics", "ics": [{"secret": "ics-aaaaaaaaaaaa"}], "identity": "made-up@example.invalid"}
-        with mock.patch.object(setup_steps, "read_config", return_value=old), \
-                mock.patch.object(setup_steps, "write_private") as written, \
-                mock.patch.object(setup_steps, "forget_unused") as forgotten:
+        with mock.patch.object(setup_steps, "read_config", autospec=True, return_value=old), \
+                mock.patch.object(setup_steps, "write_private", autospec=True) as written, \
+                mock.patch.object(setup_steps, "forget_unused", autospec=True) as forgotten:
             quietly(setup_steps.write_gws, "made-up.json", "/usr/bin/gws", "/made/up/profile", "1")
         config = written.call_args.args[1]
         self.assertNotIn("ics", config)
@@ -74,28 +75,33 @@ class TestWriteGws(unittest.TestCase):
 
 
 class TestWriteIcsCandidate(unittest.TestCase):
-    def write(self, run):
-        with mock.patch.object(setup_steps, "read_config", return_value={"write": True}), \
-                mock.patch.object(setup_steps, "write_private") as written:
+    def write(self, run, plain_allowed="no"):
+        with mock.patch.object(setup_steps, "read_config", autospec=True, return_value={"write": True}), \
+                mock.patch.object(setup_steps, "write_private", autospec=True) as written:
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
-                setup_steps.write_ics_candidate("made-up.json", "made-up.candidate", "", [FIRST, ""], run)
+                setup_steps.write_ics_candidate("made-up.json", "made-up.candidate", "", plain_allowed, [FIRST, ""], run)
         return written, output.getvalue()
 
     def test_addresses_the_keyring_takes_are_named_by_id_in_the_candidate(self):
         written, _ = self.write(answering(0))
         self.assertEqual(written.call_args.args, ("made-up.candidate", {"write": False, "backend": "ics", "ics": [{"secret": feed_id(FIRST)}]}))
 
-    def test_addresses_the_keyring_refuses_stay_in_the_private_file_and_setup_says_so(self):
-        written, output = self.write(answering(1))
+    def test_when_the_keyring_refuses_nothing_is_written_until_setup_asks(self):
+        with self.assertRaises(SystemExit) as raised:
+            self.write(answering(1))
+        self.assertEqual(raised.exception.code, setup_steps.KEYRING_REFUSED)
+
+    def test_once_allowed_the_addresses_go_into_the_private_file_and_setup_says_so(self):
+        written, output = self.write(answering(1), plain_allowed="yes")
         self.assertEqual(written.call_args.args[1]["ics"], [{"url": FIRST}])
         self.assertIn("readable by you alone", output)
 
 
 class TestFinishIcs(unittest.TestCase):
     def test_addresses_the_new_config_does_not_name_are_forgotten(self):
-        with mock.patch.object(setup_steps, "read_config", return_value={"ics": [{"secret": "ics-aaaaaaaaaaaa"}, {"url": FIRST}]}), \
-                mock.patch.object(setup_steps, "forget_unused") as forgotten:
+        with mock.patch.object(setup_steps, "read_config", autospec=True, return_value={"ics": [{"secret": "ics-aaaaaaaaaaaa"}, {"url": FIRST}]}), \
+                mock.patch.object(setup_steps, "forget_unused", autospec=True) as forgotten:
             setup_steps.finish_ics("made-up.json", "run")
         forgotten.assert_called_once_with({"ics-aaaaaaaaaaaa"}, "run")
 
@@ -105,10 +111,15 @@ class TestWritePrivate(unittest.TestCase):
         with mock.patch.object(setup_steps.os, "open", return_value=7) as opened, \
                 mock.patch.object(setup_steps.os, "fchmod") as fchmod, \
                 mock.patch.object(setup_steps.os, "fdopen", mock.mock_open()) as fdopen, \
+                mock.patch.object(setup_steps.os, "unlink") as removed, \
                 mock.patch.object(setup_steps.os, "replace") as replaced:
             setup_steps.write_private("made-up.json", {"backend": "gws"})
+        removed.assert_called_once_with("made-up.json.partial")
         self.assertEqual(opened.call_args.args[0], "made-up.json.partial")
         self.assertEqual(opened.call_args.args[2], 0o600)
+        flags = opened.call_args.args[1]
+        self.assertTrue(flags & os.O_EXCL)
+        self.assertTrue(flags & os.O_NOFOLLOW)
         fchmod.assert_called_once_with(7, 0o600)
         fdopen().write.assert_called_once_with('{\n  "backend": "gws"\n}\n')
         replaced.assert_called_once_with("made-up.json.partial", "made-up.json")
@@ -121,6 +132,17 @@ class TestMain(unittest.TestCase):
             with self.subTest(name=name), mock.patch.dict(setup_steps.COMMANDS, {name: step}):
                 setup_steps.main([name, "first", "second"])
                 step.assert_called_once_with("first", "second")
+
+
+
+class TestWritePrivateFailure(unittest.TestCase):
+    def test_a_write_that_fails_leaves_no_partial_file(self):
+        with mock.patch.object(setup_steps.os, "open", return_value=7), \
+                mock.patch.object(setup_steps.os, "fchmod", side_effect=OSError("made-up")), \
+                mock.patch.object(setup_steps.os, "unlink") as removed:
+            with self.assertRaises(OSError):
+                setup_steps.write_private("made-up.json", {"backend": "gws"})
+        self.assertEqual(removed.call_args_list, [mock.call("made-up.json.partial"), mock.call("made-up.json.partial")])
 
 
 if __name__ == "__main__":

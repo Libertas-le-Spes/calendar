@@ -34,6 +34,8 @@ def redact(url):
         return "(unreadable address)"
     if not host:
         return "(no host)"
+    if not host.isprintable():
+        return "(unprintable host)"
     return "%s://%s/..." % (parts.scheme, host)
 
 

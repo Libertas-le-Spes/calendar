@@ -1,3 +1,4 @@
+import signal
 import time
 import unittest
 
@@ -9,6 +10,10 @@ def spin_until(moment):
         pass
 
 
+def record_alarm(_signal_number, _frame):
+    pass
+
+
 class TestTimeBudget(unittest.TestCase):
     def test_a_step_still_running_when_its_time_is_up_is_stopped(self):
         started = time.monotonic()
@@ -17,15 +22,24 @@ class TestTimeBudget(unittest.TestCase):
                 spin_until(started + 5)
         self.assertLess(time.monotonic() - started, 5)
 
-    def test_a_step_that_finishes_in_time_returns_normally(self):
-        with time_budget(5):
-            finished = True
-        self.assertTrue(finished)
+    def test_the_timer_and_the_previous_handler_are_restored_after_a_step(self):
+        previous = signal.signal(signal.SIGALRM, record_alarm)
+        try:
+            with time_budget(5):
+                pass
+            self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
+            self.assertIs(signal.getsignal(signal.SIGALRM), record_alarm)
+        finally:
+            signal.signal(signal.SIGALRM, previous)
 
-    def test_the_limit_is_cleared_after_the_step(self):
-        with time_budget(0.1):
-            pass
-        time.sleep(0.2)
+    def test_a_budget_cannot_start_inside_another(self):
+        with time_budget(5):
+            with self.assertRaises(RuntimeError):
+                with time_budget(1):
+                    pass
+
+    def test_the_spent_signal_is_not_an_ordinary_exception(self):
+        self.assertFalse(issubclass(TimeBudgetSpent, Exception))
 
 
 if __name__ == "__main__":

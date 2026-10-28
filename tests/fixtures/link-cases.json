@@ -1,22 +1,98 @@
 [
-  { "link": "https://meet.google.com/abc-defg-hij?authuser=1", "safe": true },
-  { "link": "https://made-up.example.invalid/room/a@b", "safe": true },
-  { "link": "https://made-up.example.invalid", "safe": true },
-  { "link": "http://meet.google.com/abc-defg-hij", "safe": false },
-  { "link": "javascript:alert(1)", "safe": false },
-  { "link": "file:///made/up", "safe": false },
-  { "link": "https://", "safe": false },
-  { "link": "https:///made-up", "safe": false },
-  { "link": "https://made-up.example.invalid/\"x", "safe": false },
-  { "link": "https://made-up.example.invalid/'x", "safe": false },
-  { "link": "https://made-up.example.invalid/<x", "safe": false },
-  { "link": "https://made-up.example.invalid/>x", "safe": false },
-  { "link": "https://made-up.example.invalid/ x", "safe": false },
-  { "link": "https://made-up.example.invalid/\tx", "safe": false },
-  { "link": "https://made-up.example.invalid/\u0007x", "safe": false },
-  { "link": "https://made-up.example.invalid/\u007fx", "safe": false },
-  { "link": "https://made-up.example.invalid\\@meet.google.com/abc-defg-hij", "safe": false },
-  { "link": "https://made-up.example.invalid/a\\b", "safe": false },
-  { "link": "https://made-up.example.invalid@meet.google.com/abc-defg-hij", "safe": false },
-  { "link": "https://user:pass@meet.google.com/abc-defg-hij", "safe": false }
+  {
+    "link": "https://meet.google.com/abc-defg-hij?authuser=1",
+    "safe": true
+  },
+  {
+    "link": "https://made-up.example.invalid/room/a@b",
+    "safe": true
+  },
+  {
+    "link": "https://made-up.example.invalid",
+    "safe": true
+  },
+  {
+    "link": "http://meet.google.com/abc-defg-hij",
+    "safe": false
+  },
+  {
+    "link": "javascript:alert(1)",
+    "safe": false
+  },
+  {
+    "link": "file:///made/up",
+    "safe": false
+  },
+  {
+    "link": "https://",
+    "safe": false
+  },
+  {
+    "link": "https:///made-up",
+    "safe": false
+  },
+  {
+    "link": "https://made-up.example.invalid/\"x",
+    "safe": false
+  },
+  {
+    "link": "https://made-up.example.invalid/'x",
+    "safe": false
+  },
+  {
+    "link": "https://made-up.example.invalid/<x",
+    "safe": false
+  },
+  {
+    "link": "https://made-up.example.invalid/>x",
+    "safe": false
+  },
+  {
+    "link": "https://made-up.example.invalid/ x",
+    "safe": false
+  },
+  {
+    "link": "https://made-up.example.invalid/\tx",
+    "safe": false
+  },
+  {
+    "link": "https://made-up.example.invalid/\u0007x",
+    "safe": false
+  },
+  {
+    "link": "https://made-up.example.invalid/\u007fx",
+    "safe": false
+  },
+  {
+    "link": "https://made-up.example.invalid\\@meet.google.com/abc-defg-hij",
+    "safe": false
+  },
+  {
+    "link": "https://made-up.example.invalid/a\\b",
+    "safe": false
+  },
+  {
+    "link": "https://made-up.example.invalid@meet.google.com/abc-defg-hij",
+    "safe": false
+  },
+  {
+    "link": "https://user:pass@meet.google.com/abc-defg-hij",
+    "safe": false
+  },
+  {
+    "link": "https://made-up.example.invalid/x\n",
+    "safe": false
+  },
+  {
+    "link": "https://made-up.example.invalid/x\u0085",
+    "safe": false
+  },
+  {
+    "link": "https://made-up.example.invalid/x\ufeff",
+    "safe": false
+  },
+  {
+    "link": "https://made-up.example.invalid/x\u2028",
+    "safe": false
+  }
 ]

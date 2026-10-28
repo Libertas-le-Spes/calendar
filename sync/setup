@@ -123,7 +123,21 @@ EOF
   local candidate
   candidate=$(mktemp "$CONFIG.XXXXXX")
   trap 'rm -f "$candidate"' EXIT
-  setup_step write-ics "$CONFIG" "$candidate" "$identity" 3< <(printf '%s\n' "${urls[@]}")
+  local stored=0
+  setup_step write-ics "$CONFIG" "$candidate" "$identity" no 3< <(printf '%s\n' "${urls[@]}") || stored=$?
+  if [ "$stored" = 3 ]; then
+    setup_step finish-ics "$CONFIG"
+    printf '  The keyring did not take the addresses. Keep them in the config file\n'
+    printf '  instead, readable by you alone? [y/N] '
+    local answer=""
+    read -r answer || true
+    case "$answer" in
+      y|Y|yes|Yes) setup_step write-ics "$CONFIG" "$candidate" "$identity" yes 3< <(printf '%s\n' "${urls[@]}") ;;
+      *) echo "  Nothing changed."; exit 1 ;;
+    esac
+  elif [ "$stored" != 0 ]; then
+    exit "$stored"
+  fi
 
   step "Testing the feeds"
   "$SYNC_BIN" --config "$candidate" || {

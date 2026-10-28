@@ -10,8 +10,11 @@ import contextlib
 import signal
 
 
-class TimeBudgetSpent(Exception):
-    """The step ran past its time limit."""
+class TimeBudgetSpent(BaseException):
+    """The step ran past its time limit.
+
+    A BaseException, so a library's own `except Exception` cannot swallow it.
+    """
 
 
 def _spent(_signal_number, _frame):
@@ -20,6 +23,8 @@ def _spent(_signal_number, _frame):
 
 @contextlib.contextmanager
 def time_budget(seconds):
+    if signal.getitimer(signal.ITIMER_REAL)[0] > 0:
+        raise RuntimeError("a time budget is already running")
     previous = signal.signal(signal.SIGALRM, _spent)
     signal.setitimer(signal.ITIMER_REAL, seconds)
     try:
