@@ -48,6 +48,7 @@ Item {
   }
 
   component MonthArrow: Text {
+    textFormat: Text.PlainText
     property int delta: 0
     color: root.foreground
     font.family: root.fontFamily
@@ -102,6 +103,7 @@ Item {
         }
 
         Text {
+          textFormat: Text.PlainText
           id: monthLabel
           anchors.horizontalCenter: parent.horizontalCenter
           text: {
@@ -130,6 +132,7 @@ Item {
           model: Model.weekdayOrder(root.weekStart)
 
           Text {
+            textFormat: Text.PlainText
             required property int modelData
             width: Style.space(28)
             horizontalAlignment: Text.AlignHCenter
@@ -163,6 +166,7 @@ Item {
             border.color: root.fade(0.5)
 
             Text {
+              textFormat: Text.PlainText
               anchors.centerIn: parent
               text: modelData.day
               color: modelData.inMonth ? root.foreground : root.fade(0.4)

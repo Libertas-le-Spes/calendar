@@ -1,0 +1,27 @@
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: archlinux@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413
+    steps:
+      - name: Install the packages the plugin runs with on Omarchy
+        run: pacman -Syu --noconfirm --needed git python python-icalendar python-recurring-ical-events nodejs
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Python tests
+        working-directory: sync
+        run: PYTHONPATH=. python3 -m unittest discover -s ../tests -t .. -v
+      - name: JavaScript tests
+        run: node --test tests/*.test.js

@@ -28,6 +28,7 @@ Column {
     spacing: Style.space(1)
 
     Text {
+      textFormat: Text.PlainText
       visible: root.label !== ""
       width: parent.width
       text: root.label
@@ -38,6 +39,7 @@ Column {
     }
 
     Text {
+      textFormat: Text.PlainText
       visible: root.hint !== ""
       width: parent.width
       text: root.hint

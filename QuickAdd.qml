@@ -69,6 +69,7 @@ Rectangle {
       height: Math.max(field.implicitHeight, Style.spacing.controlHeight)
 
       Text {
+        textFormat: Text.PlainText
         id: plus
         anchors.left: parent.left
         anchors.verticalCenter: parent.verticalCenter

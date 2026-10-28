@@ -64,6 +64,7 @@ Column {
     height: Math.max(lineIcon.implicitHeight, slot.childrenRect.height)
 
     Text {
+      textFormat: Text.PlainText
       id: lineIcon
       text: line.icon
       color: root.muted
@@ -238,6 +239,7 @@ Column {
     }
 
     Text {
+      textFormat: Text.PlainText
       id: directions
       visible: root.mapsUrl !== ""
       anchors.right: parent.right
@@ -290,6 +292,7 @@ Column {
   }
 
   Text {
+    textFormat: Text.PlainText
     visible: root.fromTodoist || (!root.editable && root.eventUrl !== "")
     width: parent.width
     text: root.tr(root.fromTodoist ? "insp.todoistNote" : "insp.readOnlyNote")

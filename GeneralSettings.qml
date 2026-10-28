@@ -95,6 +95,7 @@ Column {
     spacing: Style.space(1)
 
     Text {
+      textFormat: Text.PlainText
       text: root.tr("settings.sync")
       color: root.foreground
       font.family: root.fontFamily

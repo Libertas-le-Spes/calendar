@@ -37,6 +37,7 @@ Column {
   }
 
   Text {
+    textFormat: Text.PlainText
     text: root.tr("agenda.upcoming").toUpperCase()
     color: Util.alpha(root.foreground, 0.6)
     font.family: root.fontFamily
@@ -87,6 +88,7 @@ Column {
           }
 
           Text {
+            textFormat: Text.PlainText
             id: rowTime
             anchors.left: parent.left
             anchors.leftMargin: Style.space(6)
@@ -144,6 +146,7 @@ Column {
       }
 
       Text {
+        textFormat: Text.PlainText
         visible: day.modelData.more > 0
         leftPadding: Style.space(66)
         text: Strings.trn(root.language, "agenda.more", day.modelData.more)

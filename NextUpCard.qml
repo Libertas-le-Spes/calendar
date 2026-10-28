@@ -55,6 +55,7 @@ Rectangle {
     spacing: Style.space(3)
 
     Text {
+      textFormat: Text.PlainText
       text: root.badge.toUpperCase()
       color: Color.accent
       font.family: root.fontFamily

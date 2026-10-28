@@ -31,6 +31,7 @@ Column {
     height: Math.max(formTitle.implicitHeight, saveButton.height)
 
     Text {
+      textFormat: Text.PlainText
       id: formTitle
       anchors.left: parent.left
       anchors.right: formActions.left

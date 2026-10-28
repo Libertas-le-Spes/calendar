@@ -153,6 +153,7 @@ Column {
       }
 
       Text {
+        textFormat: Text.PlainText
         id: guestAnswer
         anchors.right: removeButton.left
         anchors.rightMargin: Style.space(4)

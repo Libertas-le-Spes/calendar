@@ -16,6 +16,7 @@ Item {
   implicitHeight: title.implicitHeight
 
   Text {
+    textFormat: Text.PlainText
     id: title
     anchors.left: parent.left
     anchors.right: noteText.left
@@ -31,6 +32,7 @@ Item {
   }
 
   Text {
+    textFormat: Text.PlainText
     id: noteText
     anchors.right: parent.right
     anchors.baseline: title.baseline

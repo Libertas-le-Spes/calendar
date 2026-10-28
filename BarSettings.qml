@@ -48,6 +48,7 @@ Column {
     spacing: Style.space(10)
 
     Text {
+      textFormat: Text.PlainText
       width: Style.space(90)
       text: parent.when
       color: root.faint

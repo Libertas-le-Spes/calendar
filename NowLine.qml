@@ -24,6 +24,7 @@ Item {
   }
 
   Text {
+    textFormat: Text.PlainText
     id: label
     anchors.left: dot.right
     anchors.leftMargin: Style.space(6)

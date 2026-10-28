@@ -83,6 +83,7 @@ Item {
   }
 
   component SectionLabel: Text {
+    textFormat: Text.PlainText
     color: Util.alpha(root.foreground, 0.6)
     font.family: root.fontFamily
     font.pixelSize: Style.font.caption
@@ -158,6 +159,7 @@ Item {
         }
 
         Text {
+          textFormat: Text.PlainText
           width: parent.width
           text: root.busy ? root.tr("agenda.loading") : root.daySummary
           wrapMode: Text.Wrap
