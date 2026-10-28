@@ -6,10 +6,12 @@ with no file at all.
 
 import copy
 import json
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import NamedTuple
 
 CONFIG_PATH = Path.home() / ".config" / "omarchy" / "calendar-sync.json"
+MAX_WINDOW_DAYS = 366
 
 DEFAULTS = {
     # "gws" reads Google directly and needs a Google Cloud project;
@@ -95,6 +97,13 @@ def _validate_calendars(calendars):
 
 def _coerce_days(value, key):
     """Turn a window day count into an int, or fail loudly naming the key."""
+    days = _as_whole_number(value, key)
+    if days < 0 or days > MAX_WINDOW_DAYS:
+        raise ConfigError(f"{key} must be between 0 and {MAX_WINDOW_DAYS}")
+    return days
+
+
+def _as_whole_number(value, key):
     if isinstance(value, bool):
         raise ConfigError(f"{key} must be a number")
     if isinstance(value, (int, float)):
@@ -122,6 +131,18 @@ def select_calendars(calendars, config):
             continue
         selected.append(calendar)
     return selected
+
+
+class DayWindow(NamedTuple):
+    first: date
+    last: date
+
+
+def local_days_in_window(config, now, local_tz):
+    time_min, time_max = window_bounds(config, now)
+    first = datetime.fromisoformat(time_min).astimezone(local_tz).date()
+    last = datetime.fromisoformat(time_max).astimezone(local_tz).date()
+    return DayWindow(first, last)
 
 
 def window_bounds(config, now):

@@ -1,7 +1,11 @@
+from datetime import date
 import unittest
 from zoneinfo import ZoneInfo
 
 from omarchy_calendar_sync import normalize
+from omarchy_calendar_sync.config import DayWindow
+
+WIDE_WINDOW = DayWindow(date(2000, 1, 1), date(2100, 12, 31))
 
 BOGOTA = ZoneInfo("America/Bogota")
 NEW_YORK = ZoneInfo("America/New_York")
@@ -35,7 +39,7 @@ def all_day(start, end, **extra):
 class TestTimedEvents(unittest.TestCase):
     def test_single_day_produces_one_row(self):
         rows = normalize.normalize_event(
-            timed("2026-08-10T19:15:00-05:00", "2026-08-10T20:15:00-05:00"), CAL, BOGOTA
+            timed("2026-08-10T19:15:00-05:00", "2026-08-10T20:15:00-05:00"), CAL, BOGOTA, WIDE_WINDOW
         )
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["dateKey"], "2026-08-10")
@@ -47,38 +51,38 @@ class TestTimedEvents(unittest.TestCase):
     def test_utc_input_is_converted_to_local_day(self):
         # 02:30 UTC on the 11th is 21:30 on the 10th in Bogota.
         rows = normalize.normalize_event(
-            timed("2026-08-11T02:30:00Z", "2026-08-11T03:30:00Z"), CAL, BOGOTA
+            timed("2026-08-11T02:30:00Z", "2026-08-11T03:30:00Z"), CAL, BOGOTA, WIDE_WINDOW
         )
         self.assertEqual([r["dateKey"] for r in rows], ["2026-08-10"])
 
     def test_event_crossing_midnight_produces_two_rows(self):
         rows = normalize.normalize_event(
-            timed("2026-08-10T23:00:00-05:00", "2026-08-11T01:00:00-05:00"), CAL, BOGOTA
+            timed("2026-08-10T23:00:00-05:00", "2026-08-11T01:00:00-05:00"), CAL, BOGOTA, WIDE_WINDOW
         )
         self.assertEqual([r["dateKey"] for r in rows], ["2026-08-10", "2026-08-11"])
 
     def test_event_ending_exactly_at_midnight_stays_on_one_day(self):
         rows = normalize.normalize_event(
-            timed("2026-08-10T22:00:00-05:00", "2026-08-11T00:00:00-05:00"), CAL, BOGOTA
+            timed("2026-08-10T22:00:00-05:00", "2026-08-11T00:00:00-05:00"), CAL, BOGOTA, WIDE_WINDOW
         )
         self.assertEqual([r["dateKey"] for r in rows], ["2026-08-10"])
 
     def test_rows_of_one_event_share_the_google_id(self):
         rows = normalize.normalize_event(
-            timed("2026-08-10T23:00:00-05:00", "2026-08-11T01:00:00-05:00"), CAL, BOGOTA
+            timed("2026-08-10T23:00:00-05:00", "2026-08-11T01:00:00-05:00"), CAL, BOGOTA, WIDE_WINDOW
         )
         self.assertEqual({r["id"] for r in rows}, {"evt1"})
 
     def test_end_before_start_produces_no_rows(self):
         rows = normalize.normalize_event(
-            timed("2026-08-10T20:15:00-05:00", "2026-08-10T19:15:00-05:00"), CAL, BOGOTA
+            timed("2026-08-10T20:15:00-05:00", "2026-08-10T19:15:00-05:00"), CAL, BOGOTA, WIDE_WINDOW
         )
         self.assertEqual(rows, [])
 
     def test_end_equal_to_start_still_produces_one_row(self):
         # A zero-length event is a legal marker, deliberately not rejected.
         rows = normalize.normalize_event(
-            timed("2026-08-10T19:15:00-05:00", "2026-08-10T19:15:00-05:00"), CAL, BOGOTA
+            timed("2026-08-10T19:15:00-05:00", "2026-08-10T19:15:00-05:00"), CAL, BOGOTA, WIDE_WINDOW
         )
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["dateKey"], "2026-08-10")
@@ -87,7 +91,7 @@ class TestTimedEvents(unittest.TestCase):
         # No UTC offset means the result would depend on the machine's local
         # timezone, so the event must be dropped instead of guessed at.
         rows = normalize.normalize_event(
-            timed("2026-08-10T19:15:00", "2026-08-10T20:15:00"), CAL, BOGOTA
+            timed("2026-08-10T19:15:00", "2026-08-10T20:15:00"), CAL, BOGOTA, WIDE_WINDOW
         )
         self.assertEqual(rows, [])
 
@@ -95,19 +99,19 @@ class TestTimedEvents(unittest.TestCase):
         # US DST starts 2026-03-08 at 07:00 UTC (02:00 EST jumps to 03:00 EDT).
         # Start is before that instant (EST, UTC-5); end is after it (EDT, UTC-4).
         rows = normalize.normalize_event(
-            timed("2026-03-08T04:30:00Z", "2026-03-08T09:30:00Z"), CAL, NEW_YORK
+            timed("2026-03-08T04:30:00Z", "2026-03-08T09:30:00Z"), CAL, NEW_YORK, WIDE_WINDOW
         )
         self.assertEqual([r["dateKey"] for r in rows], ["2026-03-07", "2026-03-08"])
 
 
 class TestAllDayEvents(unittest.TestCase):
     def test_single_all_day_uses_exclusive_end(self):
-        rows = normalize.normalize_event(all_day("2026-08-17", "2026-08-18"), CAL, BOGOTA)
+        rows = normalize.normalize_event(all_day("2026-08-17", "2026-08-18"), CAL, BOGOTA, WIDE_WINDOW)
         self.assertEqual([r["dateKey"] for r in rows], ["2026-08-17"])
         self.assertTrue(rows[0]["allDay"])
 
     def test_three_day_all_day_produces_three_rows(self):
-        rows = normalize.normalize_event(all_day("2026-08-17", "2026-08-20"), CAL, BOGOTA)
+        rows = normalize.normalize_event(all_day("2026-08-17", "2026-08-20"), CAL, BOGOTA, WIDE_WINDOW)
         self.assertEqual(
             [r["dateKey"] for r in rows], ["2026-08-17", "2026-08-18", "2026-08-19"]
         )
@@ -116,12 +120,12 @@ class TestAllDayEvents(unittest.TestCase):
         # Not what the API documents, but what it returns for some one-day
         # markers. The event is visible in Google Calendar, so hiding it here
         # would be a silent disagreement with what the user can see.
-        rows = normalize.normalize_event(all_day("2026-08-17", "2026-08-17"), CAL, BOGOTA)
+        rows = normalize.normalize_event(all_day("2026-08-17", "2026-08-17"), CAL, BOGOTA, WIDE_WINDOW)
         self.assertEqual([r["dateKey"] for r in rows], ["2026-08-17"])
         self.assertTrue(rows[0]["allDay"])
 
     def test_end_date_before_start_date_still_occupies_its_start(self):
-        rows = normalize.normalize_event(all_day("2026-08-17", "2026-08-16"), CAL, BOGOTA)
+        rows = normalize.normalize_event(all_day("2026-08-17", "2026-08-16"), CAL, BOGOTA, WIDE_WINDOW)
         self.assertEqual([r["dateKey"] for r in rows], ["2026-08-17"])
 
 
@@ -130,31 +134,31 @@ class TestFiltering(unittest.TestCase):
         rows = normalize.normalize_event(
             timed("2026-08-10T19:15:00-05:00", "2026-08-10T20:15:00-05:00", status="cancelled"),
             CAL,
-            BOGOTA,
+            BOGOTA, WIDE_WINDOW,
         )
         self.assertEqual(rows, [])
 
     def test_event_without_start_is_dropped(self):
-        rows = normalize.normalize_event({"id": "x", "status": "confirmed"}, CAL, BOGOTA)
+        rows = normalize.normalize_event({"id": "x", "status": "confirmed"}, CAL, BOGOTA, WIDE_WINDOW)
         self.assertEqual(rows, [])
 
     def test_missing_summary_falls_back(self):
         event = timed("2026-08-10T19:15:00-05:00", "2026-08-10T20:15:00-05:00")
         del event["summary"]
-        rows = normalize.normalize_event(event, CAL, BOGOTA)
+        rows = normalize.normalize_event(event, CAL, BOGOTA, WIDE_WINDOW)
         self.assertEqual(rows[0]["title"], normalize.NO_TITLE)
 
     def test_blank_summary_falls_back(self):
         rows = normalize.normalize_event(
             timed("2026-08-10T19:15:00-05:00", "2026-08-10T20:15:00-05:00", summary="   "),
             CAL,
-            BOGOTA,
+            BOGOTA, WIDE_WINDOW,
         )
         self.assertEqual(rows[0]["title"], normalize.NO_TITLE)
 
     def test_location_defaults_to_empty_string(self):
         rows = normalize.normalize_event(
-            timed("2026-08-10T19:15:00-05:00", "2026-08-10T20:15:00-05:00"), CAL, BOGOTA
+            timed("2026-08-10T19:15:00-05:00", "2026-08-10T20:15:00-05:00"), CAL, BOGOTA, WIDE_WINDOW
         )
         self.assertEqual(rows[0]["location"], "")
 
@@ -162,10 +166,40 @@ class TestFiltering(unittest.TestCase):
         # A malformed start node must be dropped, not raise.
         event = {"id": "evt3", "status": "confirmed", "start": {"date": None}}
         try:
-            rows = normalize.normalize_event(event, CAL, BOGOTA)
+            rows = normalize.normalize_event(event, CAL, BOGOTA, WIDE_WINDOW)
         except Exception as exc:  # noqa: BLE001
             self.fail(f"normalize_event raised {exc!r} instead of dropping the event")
         self.assertEqual(rows, [])
+
+
+class TestWindow(unittest.TestCase):
+    OCTOBER = DayWindow(date(2026, 10, 1), date(2026, 10, 31))
+
+    def day_keys(self, rows):
+        keys = []
+        for row in rows:
+            keys.append(row["dateKey"])
+        return keys
+
+    def test_an_event_lasting_a_thousand_years_gets_a_row_only_for_each_day_of_the_window(self):
+        rows = normalize.normalize_event(all_day("2026-01-01", "3026-01-01"), CAL, BOGOTA, self.OCTOBER)
+        self.assertEqual(len(rows), 31)
+        self.assertEqual(rows[0]["dateKey"], "2026-10-01")
+        self.assertEqual(rows[-1]["dateKey"], "2026-10-31")
+
+    def test_a_clipped_event_keeps_its_real_start_and_end(self):
+        rows = normalize.normalize_event(all_day("2026-01-01", "3026-01-01"), CAL, BOGOTA, self.OCTOBER)
+        self.assertEqual(rows[0]["start"], "2026-01-01T00:00:00-05:00")
+        self.assertEqual(rows[0]["end"], "3026-01-01T00:00:00-05:00")
+
+    def test_a_timed_event_crossing_the_window_start_begins_on_its_first_day(self):
+        event = timed("2026-09-30T22:00:00-05:00", "2026-10-01T02:00:00-05:00")
+        rows = normalize.normalize_event(event, CAL, BOGOTA, self.OCTOBER)
+        self.assertEqual(self.day_keys(rows), ["2026-10-01"])
+
+    def test_an_event_wholly_outside_the_window_has_no_rows(self):
+        event = timed("2026-11-02T09:00:00-05:00", "2026-11-02T10:00:00-05:00")
+        self.assertEqual(normalize.normalize_event(event, CAL, BOGOTA, self.OCTOBER), [])
 
 
 class TestNormalizeAll(unittest.TestCase):
@@ -174,7 +208,7 @@ class TestNormalizeAll(unittest.TestCase):
             timed("2026-08-10T19:15:00-05:00", "2026-08-10T20:15:00-05:00"),
             all_day("2026-08-17", "2026-08-19"),
         ]
-        rows = normalize.normalize_all(events, CAL, BOGOTA)
+        rows = normalize.normalize_all(events, CAL, BOGOTA, WIDE_WINDOW)
         self.assertEqual(len(rows), 3)
 
 
@@ -182,7 +216,7 @@ class TestMeetingUrl(unittest.TestCase):
     def test_hangout_link_is_used(self):
         event = timed("2026-08-10T09:00:00-05:00", "2026-08-10T09:15:00-05:00")
         event["hangoutLink"] = "https://meet.google.com/abc-defg-hij"
-        rows = normalize.normalize_event(event, CAL, BOGOTA)
+        rows = normalize.normalize_event(event, CAL, BOGOTA, WIDE_WINDOW)
         self.assertEqual(rows[0]["meetingUrl"], "https://meet.google.com/abc-defg-hij")
 
     def test_conference_data_video_entry_is_used_when_no_hangout_link(self):
@@ -193,7 +227,7 @@ class TestMeetingUrl(unittest.TestCase):
                 {"entryPointType": "video", "uri": "https://zoom.us/j/123"},
             ]
         }
-        rows = normalize.normalize_event(event, CAL, BOGOTA)
+        rows = normalize.normalize_event(event, CAL, BOGOTA, WIDE_WINDOW)
         self.assertEqual(rows[0]["meetingUrl"], "https://zoom.us/j/123")
 
     def test_non_https_schemes_are_dropped(self):
@@ -207,7 +241,7 @@ class TestMeetingUrl(unittest.TestCase):
         ):
             event = timed("2026-08-10T09:00:00-05:00", "2026-08-10T09:15:00-05:00")
             event["hangoutLink"] = hostile
-            rows = normalize.normalize_event(event, CAL, BOGOTA)
+            rows = normalize.normalize_event(event, CAL, BOGOTA, WIDE_WINDOW)
             self.assertEqual(rows[0]["meetingUrl"], "", hostile)
 
     def test_link_pasted_into_location_or_description_is_found(self):
@@ -223,24 +257,24 @@ class TestMeetingUrl(unittest.TestCase):
         for fields, expected in cases:
             event = timed("2026-08-10T09:00:00-05:00", "2026-08-10T09:15:00-05:00")
             event.update(fields)
-            rows = normalize.normalize_event(event, CAL, BOGOTA)
+            rows = normalize.normalize_event(event, CAL, BOGOTA, WIDE_WINDOW)
             self.assertEqual(rows[0]["meetingUrl"], expected, fields)
 
     def test_location_wins_over_description_and_unknown_hosts_are_ignored(self):
         event = timed("2026-08-10T09:00:00-05:00", "2026-08-10T09:15:00-05:00")
         event["location"] = "https://meet.google.com/aaa-bbbb-ccc"
         event["description"] = "Previous call: https://meet.google.com/xxx-yyyy-zzz"
-        rows = normalize.normalize_event(event, CAL, BOGOTA)
+        rows = normalize.normalize_event(event, CAL, BOGOTA, WIDE_WINDOW)
         self.assertEqual(rows[0]["meetingUrl"], "https://meet.google.com/aaa-bbbb-ccc")
 
         event = timed("2026-08-10T09:00:00-05:00", "2026-08-10T09:15:00-05:00")
         event["description"] = "Slides: https://evil.example.com/meet.google.com/abc-defg-hij"
-        rows = normalize.normalize_event(event, CAL, BOGOTA)
+        rows = normalize.normalize_event(event, CAL, BOGOTA, WIDE_WINDOW)
         self.assertEqual(rows[0]["meetingUrl"], "")
 
     def test_missing_link_is_an_empty_string_not_none(self):
         rows = normalize.normalize_event(
-            timed("2026-08-10T09:00:00-05:00", "2026-08-10T09:15:00-05:00"), CAL, BOGOTA
+            timed("2026-08-10T09:00:00-05:00", "2026-08-10T09:15:00-05:00"), CAL, BOGOTA, WIDE_WINDOW
         )
         self.assertEqual(rows[0]["meetingUrl"], "")
         self.assertEqual(rows[0]["eventUrl"], "")
@@ -250,7 +284,7 @@ class TestEventTypeAndResponse(unittest.TestCase):
     def test_event_type_is_carried(self):
         event = timed("2026-08-10T09:00:00-05:00", "2026-08-10T09:15:00-05:00")
         event["eventType"] = "workingLocation"
-        rows = normalize.normalize_event(event, CAL, BOGOTA)
+        rows = normalize.normalize_event(event, CAL, BOGOTA, WIDE_WINDOW)
         self.assertEqual(rows[0]["eventType"], "workingLocation")
 
     def test_own_response_status_is_picked_from_attendees(self):
@@ -259,19 +293,19 @@ class TestEventTypeAndResponse(unittest.TestCase):
             {"email": "someone@example.com", "responseStatus": "accepted"},
             {"email": "me@example.com", "self": True, "responseStatus": "declined"},
         ]
-        rows = normalize.normalize_event(event, CAL, BOGOTA)
+        rows = normalize.normalize_event(event, CAL, BOGOTA, WIDE_WINDOW)
         self.assertEqual(rows[0]["responseStatus"], "declined")
 
     def test_no_attendees_means_no_response_status(self):
         rows = normalize.normalize_event(
-            timed("2026-08-10T09:00:00-05:00", "2026-08-10T09:15:00-05:00"), CAL, BOGOTA
+            timed("2026-08-10T09:00:00-05:00", "2026-08-10T09:15:00-05:00"), CAL, BOGOTA, WIDE_WINDOW
         )
         self.assertEqual(rows[0]["responseStatus"], "")
 
     def test_every_row_of_a_multi_day_event_carries_the_extras(self):
         event = timed("2026-08-10T23:00:00-05:00", "2026-08-11T01:00:00-05:00")
         event["hangoutLink"] = "https://meet.google.com/x"
-        rows = normalize.normalize_event(event, CAL, BOGOTA)
+        rows = normalize.normalize_event(event, CAL, BOGOTA, WIDE_WINDOW)
         self.assertEqual(len(rows), 2)
         self.assertTrue(all(r["meetingUrl"] == "https://meet.google.com/x" for r in rows))
 
@@ -293,20 +327,20 @@ class TestUrlGuardMatchesTheWidget(unittest.TestCase):
         ):
             event = timed("2026-08-10T09:00:00-05:00", "2026-08-10T09:15:00-05:00")
             event["hangoutLink"] = hostile
-            rows = normalize.normalize_event(event, CAL, BOGOTA)
+            rows = normalize.normalize_event(event, CAL, BOGOTA, WIDE_WINDOW)
             self.assertEqual(rows[0]["meetingUrl"], "", hostile)
 
     def test_an_ordinary_link_still_passes(self):
         event = timed("2026-08-10T09:00:00-05:00", "2026-08-10T09:15:00-05:00")
         event["hangoutLink"] = "https://meet.google.com/abc-defg-hij?authuser=1"
-        rows = normalize.normalize_event(event, CAL, BOGOTA)
+        rows = normalize.normalize_event(event, CAL, BOGOTA, WIDE_WINDOW)
         self.assertEqual(rows[0]["meetingUrl"], "https://meet.google.com/abc-defg-hij?authuser=1")
 
 
 class TestDescription(unittest.TestCase):
     def row(self, description):
         event = timed("2026-08-10T09:00:00-05:00", "2026-08-10T09:15:00-05:00", description=description)
-        return normalize.normalize_event(event, CAL, BOGOTA)[0]
+        return normalize.normalize_event(event, CAL, BOGOTA, WIDE_WINDOW)[0]
 
     def test_google_html_becomes_plain_text(self):
         row = self.row('Agenda:<br><b>1.</b> Budget &amp; plan<br><a href="https://ex.com/doc">doc</a>')
@@ -314,7 +348,7 @@ class TestDescription(unittest.TestCase):
 
     def test_missing_description_is_an_empty_string(self):
         rows = normalize.normalize_event(
-            timed("2026-08-10T09:00:00-05:00", "2026-08-10T09:15:00-05:00"), CAL, BOGOTA
+            timed("2026-08-10T09:00:00-05:00", "2026-08-10T09:15:00-05:00"), CAL, BOGOTA, WIDE_WINDOW
         )
         self.assertEqual(rows[0]["description"], "")
 
@@ -336,7 +370,7 @@ class TestReminders(unittest.TestCase):
         event = timed("2026-08-10T09:00:00-05:00", "2026-08-10T09:15:00-05:00")
         if settings is not None:
             event["reminders"] = settings
-        return normalize.normalize_event(event, calendar, BOGOTA)[0]["reminders"]
+        return normalize.normalize_event(event, calendar, BOGOTA, WIDE_WINDOW)[0]["reminders"]
 
     def test_absent_settings_mean_no_reminders(self):
         self.assertEqual(self.reminders(None), [])

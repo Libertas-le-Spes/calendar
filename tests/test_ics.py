@@ -1,3 +1,4 @@
+from datetime import date
 """Tests for the iCal feed backend."""
 
 import base64
@@ -8,6 +9,9 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from omarchy_calendar_sync import cli, config, ics, normalize
+from omarchy_calendar_sync.config import DayWindow
+
+WIDE_WINDOW = DayWindow(date(2000, 1, 1), date(2100, 12, 31))
 
 SAO_PAULO = ZoneInfo("America/Sao_Paulo")
 URL = "https://calendar.google.com/calendar/ical/me%40example.com/private-abc123/basic.ics"
@@ -132,7 +136,7 @@ def sync_rows(c):
     lo, hi = config.window_bounds(cfg, NOW)
     rows = []
     for cal in calendars:
-        rows.extend(normalize.normalize_all(c.events(cal["id"], lo, hi), cal, SAO_PAULO))
+        rows.extend(normalize.normalize_all(c.events(cal["id"], lo, hi), cal, SAO_PAULO, WIDE_WINDOW))
     return calendars, rows
 
 
@@ -304,3 +308,41 @@ class TestBackendSelection(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakeStream:
+    def __init__(self, size):
+        self.size = size
+        self.asked = []
+
+    def read(self, amount):
+        self.asked.append(amount)
+        return b"x" * min(amount, self.size)
+
+
+class TestFeedSize(unittest.TestCase):
+    def test_one_byte_past_the_limit_is_read_once(self):
+        stream = FakeStream(10)
+        ics.read_capped(stream, 10)
+        self.assertEqual(stream.asked, [11])
+
+    def test_a_feed_at_the_limit_is_returned_whole(self):
+        self.assertEqual(ics.read_capped(FakeStream(10), 10), b"x" * 10)
+
+    def test_a_feed_over_the_limit_is_refused(self):
+        with self.assertRaises(ics.FeedTooLarge):
+            ics.read_capped(FakeStream(11), 10)
+
+    def test_an_oversized_feed_is_skipped_like_any_broken_feed(self):
+        good = "https://feeds.example.invalid/good.ics"
+        big = "https://feeds.example.invalid/big.ics"
+
+        def fetch(url):
+            if url == big:
+                raise ics.FeedTooLarge("too large")
+            return FEED
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            calendars = client(fetch=fetch, feeds=[big, good]).calendars()
+        self.assertEqual(len(calendars), 1)
+        self.assertEqual(calendars[0]["id"], ics.feed_id(good))

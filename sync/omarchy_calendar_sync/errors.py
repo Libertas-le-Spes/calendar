@@ -7,3 +7,7 @@ which backend produced it.
 
 class SyncError(Exception):
     """A calendar source could not be read."""
+
+
+class TooManyEvents(SyncError):
+    """One calendar holds more events in the window than the sync takes."""

@@ -6,8 +6,10 @@ heard of Evolution.
 """
 
 import unittest
+from unittest import mock
 
 from omarchy_calendar_sync import cli, config, eds
+from omarchy_calendar_sync.errors import TooManyEvents
 
 
 class FakeTime:
@@ -80,3 +82,25 @@ class TestWriteSupport(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EndlessInstances:
+    def __init__(self):
+        self.handed_out = 0
+
+    def generate_instances_sync(self, start, end, cancellable, on_instance):
+        while on_instance("component", "start", "end"):
+            self.handed_out += 1
+        self.handed_out += 1
+
+
+class TestEventsLimit(unittest.TestCase):
+    def test_a_calendar_past_the_limit_stops_the_expansion_and_is_refused(self):
+        client = EndlessInstances()
+        source = eds.Eds()
+        source._clients["made-up"] = client
+        with mock.patch.object(eds.Eds, "_bindings", return_value=(None, None, None)), \
+                mock.patch.object(eds, "EVENTS_PER_CALENDAR", 3):
+            with self.assertRaises(TooManyEvents):
+                source.events("made-up", "2026-10-01T00:00:00+00:00", "2026-10-31T00:00:00+00:00")
+        self.assertEqual(client.handed_out, 4)

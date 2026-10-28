@@ -1,10 +1,16 @@
+from datetime import date
 import json
 import unittest
+from unittest import mock
 import urllib.parse
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from omarchy_calendar_sync import gws, normalize
+from omarchy_calendar_sync.errors import TooManyEvents
+from omarchy_calendar_sync.config import DayWindow
+
+WIDE_WINDOW = DayWindow(date(2000, 1, 1), date(2100, 12, 31))
 
 BOGOTA = ZoneInfo("America/Bogota")
 
@@ -101,13 +107,13 @@ class TestCalendars(unittest.TestCase):
         personal, moon = client.calendars()
         event = json.loads(fixture("google-events.json"))["items"][0]
         event["reminders"] = {"useDefault": True}
-        self.assertEqual(normalize.normalize_event(event, personal, BOGOTA)[0]["reminders"], [10])
-        self.assertEqual(normalize.normalize_event(event, moon, BOGOTA)[0]["reminders"], [])
+        self.assertEqual(normalize.normalize_event(event, personal, BOGOTA, WIDE_WINDOW)[0]["reminders"], [10])
+        self.assertEqual(normalize.normalize_event(event, moon, BOGOTA, WIDE_WINDOW)[0]["reminders"], [])
 
         event["reminders"] = {"useDefault": False, "overrides": [
             {"method": "popup", "minutes": 30}, {"method": "email", "minutes": 60}, {"method": "popup", "minutes": 5},
         ]}
-        self.assertEqual(normalize.normalize_event(event, personal, BOGOTA)[0]["reminders"], [5, 30])
+        self.assertEqual(normalize.normalize_event(event, personal, BOGOTA, WIDE_WINDOW)[0]["reminders"], [5, 30])
 
     def test_missing_color_falls_back(self):
         body = json.dumps({"items": [{"id": "x", "summary": "No Color"}]})
@@ -148,6 +154,30 @@ class TestEvents(unittest.TestCase):
         gws.Gws("/my/profile", runner=runner).events("a", "MIN", "MAX")
         env = runner.calls[0][1]
         self.assertEqual(env["GOOGLE_WORKSPACE_CLI_CONFIG_DIR"], "/my/profile")
+
+
+class TestEventsLimit(unittest.TestCase):
+    def page(self, count, more):
+        items = []
+        for number in range(count):
+            items.append({"id": "evt%d" % number})
+        body = {"items": items}
+        if more:
+            body["nextPageToken"] = "next"
+        return (0, json.dumps(body), "")
+
+    def test_a_calendar_at_the_limit_is_returned_whole(self):
+        runner = SequentialFakeRunner([self.page(2, False)])
+        with mock.patch.object(gws, "EVENTS_PER_CALENDAR", 2):
+            items = gws.Gws("/tmp/profile", runner=runner).events("a@example.com", "MIN", "MAX")
+        self.assertEqual(len(items), 2)
+
+    def test_paging_stops_as_soon_as_a_calendar_passes_the_limit(self):
+        runner = SequentialFakeRunner([self.page(2, True), self.page(2, True), self.page(2, True)])
+        with mock.patch.object(gws, "EVENTS_PER_CALENDAR", 3):
+            with self.assertRaises(TooManyEvents):
+                gws.Gws("/tmp/profile", runner=runner).events("a@example.com", "MIN", "MAX")
+        self.assertEqual(len(runner.calls), 2)
 
 
 class TestEventsPagination(unittest.TestCase):

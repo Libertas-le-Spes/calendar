@@ -15,7 +15,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from .errors import SyncError
+from .errors import SyncError, TooManyEvents
+from .limits import EVENTS_PER_CALENDAR
 
 MINIMUM_VERSION = (0, 13, 2)
 FALLBACK_COLOR = "#9e9e9e"
@@ -184,6 +185,10 @@ class Gws:
                 ["calendar", "events", "list", "--params", json.dumps(params)]
             )
             items.extend(payload.get("items", []))
+            if len(items) > EVENTS_PER_CALENDAR:
+                raise TooManyEvents(
+                    "more than %d events in the sync window" % EVENTS_PER_CALENDAR
+                )
             page_token = payload.get("nextPageToken")
             if not page_token:
                 return items

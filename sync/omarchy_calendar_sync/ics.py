@@ -25,7 +25,9 @@ import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
 
-from .errors import SyncError
+from .errors import SyncError, TooManyEvents
+from .feed_expansion import affordable_calendar, occurrences_in_window
+from .limits import FEED_BYTES
 from .localzone import resolve_local_timezone
 from .resources import build_event
 
@@ -159,10 +161,21 @@ def parse_feeds(raw):
     return feeds
 
 
+class FeedTooLarge(ValueError):
+    """A feed is larger than any real calendar the sync reads."""
+
+
 def _http_get(url):
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(request, timeout=FETCH_TIMEOUT) as response:
-        return response.read()
+        return read_capped(response, FEED_BYTES)
+
+
+def read_capped(stream, limit):
+    body = stream.read(limit + 1)
+    if len(body) > limit:
+        raise FeedTooLarge("the feed is larger than %d bytes" % limit)
+    return body
 
 
 def to_node(value, local_tz):
@@ -339,15 +352,20 @@ class Ics:
         return found
 
     def events(self, calendar_id, time_min, time_max):
-        _icalendar, rie = _load_libs()
+        icalendar, rie = _load_libs()
         if calendar_id not in self._parsed:
             raise IcsError("calendar %s was never fetched" % calendar_id)
         calendar, google_id = self._parsed[calendar_id]
 
         start = datetime.fromisoformat(time_min)
         end = datetime.fromisoformat(time_max)
+        affordable, left_out = affordable_calendar(icalendar, calendar, end.date())
+        if left_out:
+            print("skipping %d repeating events in %s: they repeat too often to expand" % (left_out, calendar_id))
         try:
-            occurrences = rie.of(calendar).between(start, end)
+            occurrences = occurrences_in_window(rie, affordable, start, end)
+        except TooManyEvents:
+            raise
         except Exception as error:
             raise IcsError("cannot expand %s: %s" % (calendar_id, error))
 

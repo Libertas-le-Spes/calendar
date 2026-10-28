@@ -11,7 +11,7 @@ from pathlib import Path
 from . import config as config_module
 from . import contract, normalize, suggestions
 from .eds import Eds
-from .errors import SyncError
+from .errors import SyncError, TooManyEvents
 from .gws import Gws
 from .ics import Ics
 from .localzone import resolve_local_timezone
@@ -82,6 +82,14 @@ def _drop_duplicates(gevents, seen):
     return fresh
 
 
+def _events_or_skip(client, calendar, time_min, time_max):
+    try:
+        return client.events(calendar["id"], time_min, time_max)
+    except TooManyEvents as error:
+        print(f"skipping calendar {calendar['name']!r}: {error}", file=sys.stderr)
+        return []
+
+
 def run(client, cfg, now, out_path, local_tz):
     """Fetch, normalize, write. Returns a process exit code."""
     try:
@@ -93,15 +101,16 @@ def run(client, cfg, now, out_path, local_tz):
         # dedup. The sort is stable, so the rest keep their name order.
         calendars.sort(key=lambda calendar: not calendar.get("primary"))
         time_min, time_max = config_module.window_bounds(cfg, now)
+        window = config_module.local_days_in_window(cfg, now, local_tz)
 
         rows = []
         seen = set()
         fetched = []
         for calendar in calendars:
-            raw = client.events(calendar["id"], time_min, time_max)
+            raw = _events_or_skip(client, calendar, time_min, time_max)
             fresh = _drop_duplicates(raw, seen)
             fetched.extend(fresh)
-            rows.extend(normalize.normalize_all(fresh, calendar, local_tz))
+            rows.extend(normalize.normalize_all(fresh, calendar, local_tz, window))
 
         source = client.SOURCE_NAME + "/" + ".".join(
             str(part) for part in client.version()

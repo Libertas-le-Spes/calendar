@@ -18,7 +18,8 @@ pure conversion functions testable, on a machine with no EDS installed.
 import time
 from datetime import datetime, timezone
 
-from .errors import SyncError
+from .errors import SyncError, TooManyEvents
+from .limits import EVENTS_PER_CALENDAR
 from .resources import build_event
 
 # EDS returns from refresh as soon as the CalDAV fetch is *initiated*, not when
@@ -190,12 +191,16 @@ class Eds:
         def on_instance(component, instance_start, instance_end,
                         _user_data=None):
             collected.append((component, instance_start, instance_end))
-            return True
+            return len(collected) <= EVENTS_PER_CALENDAR
 
         try:
             client.generate_instances_sync(start, end, None, on_instance)
         except Exception as error:
             raise EdsError("cannot read %s: %s" % (calendar_id, error))
+        if len(collected) > EVENTS_PER_CALENDAR:
+            raise TooManyEvents(
+                "more than %d events in the sync window" % EVENTS_PER_CALENDAR
+            )
 
         utc_zone = ical.Timezone.get_utc_timezone()
         return [

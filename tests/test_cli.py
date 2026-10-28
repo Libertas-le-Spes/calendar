@@ -3,11 +3,13 @@ import io
 import json
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from omarchy_calendar_sync import cli, config, contract, gws
+from omarchy_calendar_sync.errors import TooManyEvents
 
 BOGOTA = ZoneInfo("America/Bogota")
 NOW = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
@@ -298,3 +300,38 @@ class TestWritableCalendars(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CrowdedCalendarGws(FakeGws):
+    def events(self, calendar_id, time_min, time_max):
+        if calendar_id == "crowded@example.com":
+            raise TooManyEvents("more than 2000 events in the sync window")
+        return super().events(calendar_id, time_min, time_max)
+
+
+class TestCrowdedCalendar(unittest.TestCase):
+    CALENDARS = [
+        {"id": "crowded@example.com", "name": "Made-up crowded", "color": "#f83a22"},
+        {"id": "quiet@example.com", "name": "Made-up quiet", "color": "#7bd148"},
+    ]
+
+    def run_sync(self):
+        client = CrowdedCalendarGws(calendars=self.CALENDARS)
+        written = mock.create_autospec(cli.write_atomic)
+        stderr = io.StringIO()
+        with mock.patch.object(cli, "write_atomic", written), contextlib.redirect_stderr(stderr):
+            code = run_quietly(client, config.DEFAULTS, NOW, "events.json", BOGOTA)
+        return code, written, stderr.getvalue()
+
+    def test_the_other_calendars_are_still_written(self):
+        code, written, _ = self.run_sync()
+        self.assertEqual(code, cli.EXIT_OK)
+        written.assert_called_once()
+        calendar_ids = set()
+        for row in written.call_args.args[1]["events"]:
+            calendar_ids.add(row["calendarId"])
+        self.assertEqual(calendar_ids, {"quiet@example.com"})
+
+    def test_the_skipped_calendar_is_named_in_the_log(self):
+        _, _, log = self.run_sync()
+        self.assertIn("skipping calendar 'Made-up crowded'", log)

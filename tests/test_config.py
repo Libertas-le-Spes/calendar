@@ -1,8 +1,10 @@
 import json
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
+from unittest import mock
+from zoneinfo import ZoneInfo
 
 from omarchy_calendar_sync import config
 
@@ -116,6 +118,34 @@ class TestWindowBounds(unittest.TestCase):
         time_min, time_max = config.window_bounds(cfg, now)
         self.assertTrue(time_min.startswith("2026-08-09"))
         self.assertTrue(time_max.startswith("2026-08-12"))
+
+
+def load_text(text):
+    with mock.patch.object(config.Path, "exists", return_value=True), \
+            mock.patch.object(config.Path, "read_text", return_value=text):
+        return config.load(Path("calendar-sync.json"))
+
+
+class TestWindowSize(unittest.TestCase):
+    def test_a_window_of_the_largest_allowed_size_loads(self):
+        loaded = load_text(json.dumps({"window": {"pastDays": 0, "futureDays": config.MAX_WINDOW_DAYS}}))
+        self.assertEqual(loaded["window"]["futureDays"], config.MAX_WINDOW_DAYS)
+
+    def test_a_window_one_day_too_long_is_refused(self):
+        with self.assertRaises(config.ConfigError):
+            load_text(json.dumps({"window": {"futureDays": config.MAX_WINDOW_DAYS + 1}}))
+
+    def test_a_negative_window_is_refused(self):
+        with self.assertRaises(config.ConfigError):
+            load_text(json.dumps({"window": {"pastDays": -1}}))
+
+
+class TestLocalDaysInWindow(unittest.TestCase):
+    def test_the_days_are_the_local_days_of_the_window_ends(self):
+        now = datetime(2026, 8, 10, 3, 0, tzinfo=timezone.utc)
+        cfg = {"window": {"pastDays": 1, "futureDays": 2}}
+        days = config.local_days_in_window(cfg, now, ZoneInfo("America/Bogota"))
+        self.assertEqual(days, config.DayWindow(date(2026, 8, 8), date(2026, 8, 11)))
 
 
 class TestGwsPath(unittest.TestCase):

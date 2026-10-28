@@ -1,3 +1,4 @@
+from datetime import date
 import contextlib
 import io
 import json
@@ -9,6 +10,9 @@ from zoneinfo import ZoneInfo
 
 from omarchy_calendar_sync import event_cli
 from omarchy_calendar_sync.gws import GwsAuthError, GwsNotFound, GwsSignInError
+from omarchy_calendar_sync.config import DayWindow
+
+WIDE_WINDOW = DayWindow(date(2000, 1, 1), date(2100, 12, 31))
 
 BOGOTA = ZoneInfo("America/Bogota")
 ME = {"id": "me@example.com", "name": "Me", "color": "#7bd148"}
@@ -99,7 +103,7 @@ class TestPerform(unittest.TestCase):
 
     def run_event(self, raw, client, cfg=ON):
         return event_cli.perform(
-            raw, cfg, client, self.path, BOGOTA,
+            raw, cfg, client, self.path, BOGOTA, WIDE_WINDOW,
             lambda: self.background.append(1), lambda: self.inline.append(1),
         )
 
