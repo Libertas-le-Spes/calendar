@@ -84,19 +84,21 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class EndlessInstances:
-    def __init__(self):
+class ManyInstances:
+    def __init__(self, available):
+        self.available = available
         self.handed_out = 0
 
     def generate_instances_sync(self, start, end, cancellable, on_instance):
-        while on_instance("component", "start", "end"):
+        while self.handed_out < self.available:
             self.handed_out += 1
-        self.handed_out += 1
+            if not on_instance("component", "start", "end"):
+                return
 
 
 class TestEventsLimit(unittest.TestCase):
     def test_a_calendar_past_the_limit_stops_the_expansion_and_is_refused(self):
-        client = EndlessInstances()
+        client = ManyInstances(1000)
         source = eds.Eds()
         source._clients["made-up"] = client
         with mock.patch.object(eds.Eds, "_bindings", return_value=(None, None, None)), \
