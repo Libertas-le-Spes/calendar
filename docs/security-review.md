@@ -76,7 +76,7 @@ What was done, and what each fix still fails to stop:
 | F10 | The sync refuses `python-icalendar` older than 7.2.2. | Nothing found. |
 | F11 | The profile is created 700 under a private umask, and the client secret installed 600 in one step, from the newest download. | Nothing found. The README's install command still names tmn73's repository: deciding which repository installs track is left to the owner. |
 | N1  | See below. | Nothing found. |
-| N2  | A feed has 60 seconds to arrive, read in 64 KB chunks; `gws` has 60 seconds; the unit stops a run after 5 minutes, 1 GB or 64 tasks. | An EDS call that hangs costs the whole run, until the unit stops it. |
+| N2  | A feed has 60 seconds to arrive, read in 64 KB chunks; `gws` has 60 seconds; the unit stops a run after 5 minutes, 1 GB of memory with no swap to spill into, or 64 tasks. | An EDS call that hangs costs the whole run, until the unit stops it. |
 | N3  | The link rule refuses a user name and a backslash; Jitsi means `meet.jit.si`. Both suites test the same list of cases (`tests/fixtures/link-cases.json`). | Nothing found. |
 | N4  | A copy is dropped only when it says the same as the first one, or the first is in the primary calendar. | A copy in the primary calendar still wins over any other. |
 | N5  | Every `python3` in setup runs with `-I`. | Nothing found. |

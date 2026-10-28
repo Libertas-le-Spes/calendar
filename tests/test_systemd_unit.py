@@ -7,6 +7,7 @@ UNIT = Path(__file__).parent.parent / "sync" / "systemd" / "omarchy-calendar-syn
 LIMITS = {
     "TimeoutStartSec": "5min",
     "MemoryMax": "1G",
+    "MemorySwapMax": "0",
     "TasksMax": "64",
 }
 
