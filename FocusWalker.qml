@@ -10,7 +10,7 @@ Item {
   property Item formArea: null
   property Item confirmDialog: null
   property var takesText: null
-  property bool walking: false
+  property bool pointerJustUsed: false
 
   readonly property Item keyTarget: keyFocus
   readonly property Item focused: Window.activeFocusItem
@@ -34,6 +34,20 @@ Item {
   Item {
     id: keyFocus
     focus: true
+  }
+
+  PointHandler {
+    acceptedButtons: Qt.AllButtons
+    onActiveChanged: walker.notePointer(active)
+  }
+
+  function notePointer(pressed) {
+    if (pressed) walker.pointerJustUsed = true
+    else Qt.callLater(walker.forgetPointer)
+  }
+
+  function forgetPointer() {
+    walker.pointerJustUsed = false
   }
 
   function handle(event) {
@@ -74,10 +88,7 @@ Item {
 
   function walk(step) {
     var next = walker.nextStop(step)
-    if (!next) return
-    walker.walking = true
-    next.forceActiveFocus(Qt.TabFocusReason)
-    walker.walking = false
+    if (next) next.forceActiveFocus(Qt.TabFocusReason)
   }
 
   function nextStop(step) {
@@ -110,6 +121,7 @@ Item {
     if (!walker.opened) return
     if (walker.lost(item)) return walker.focusKeys()
     if (walker.takenByMouse(item)) return walker.focusKeys()
+    if (walker.leftTheForm(item)) return walker.returnToForm(item)
     walker.ensureVisible(item)
   }
 
@@ -119,9 +131,28 @@ Item {
   }
 
   function takenByMouse(item) {
-    if (walker.walking || item === keyFocus) return false
+    if (!walker.pointerJustUsed || item === keyFocus) return false
     if (walker.takesText(item)) return false
     return walker.holds(walker, item)
+  }
+
+  function leftTheForm(item) {
+    var fence = walker.fence()
+    if (!fence || item === keyFocus) return false
+    return walker.holds(walker, item) && !walker.holds(fence, item)
+  }
+
+  function returnToForm(item) {
+    var fence = walker.fence()
+    var back = item
+    var ahead = item
+    for (var tries = 0; tries < 1000; tries++) {
+      back = back.nextItemInFocusChain(false)
+      if (walker.holds(fence, back)) return back.forceActiveFocus(Qt.BacktabFocusReason)
+      ahead = ahead.nextItemInFocusChain(true)
+      if (walker.holds(fence, ahead)) return ahead.forceActiveFocus(Qt.TabFocusReason)
+    }
+    walker.focusKeys()
   }
 
   function holds(ancestor, item) {
