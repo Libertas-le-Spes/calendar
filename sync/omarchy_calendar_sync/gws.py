@@ -29,6 +29,7 @@ NO_SIGN_IN = "No Google sign-in to write with. Run sync/setup --write."
 MASKED_SIGN_IN = "gws did not hand over the sign-in. Update gws, then try again."
 CALENDAR_API = "https://www.googleapis.com/calendar/v3"
 HTTP_TIMEOUT_SECONDS = 30
+GWS_SECONDS = 60
 
 _VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 
@@ -76,7 +77,10 @@ def _write_params(send_updates):
 
 
 def _subprocess_runner(argv, env):
-    completed = subprocess.run(argv, env=env, capture_output=True, text=True)
+    try:
+        completed = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=GWS_SECONDS)
+    except subprocess.TimeoutExpired:
+        raise GwsApiError(f"gws did not answer within {GWS_SECONDS} seconds") from None
     return completed.returncode, completed.stdout, completed.stderr
 
 

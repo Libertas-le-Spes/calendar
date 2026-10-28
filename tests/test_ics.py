@@ -314,27 +314,61 @@ if __name__ == "__main__":
 
 
 class FakeStream:
-    def __init__(self, size):
-        self.size = size
-        self.asked = []
+    def __init__(self, chunks):
+        self.chunks = list(chunks)
+        self.reads = 0
 
     def read(self, amount):
-        self.asked.append(amount)
-        return b"x" * min(amount, self.size)
+        self.reads += 1
+        if not self.chunks:
+            return b""
+        return self.chunks.pop(0)
+
+
+class FakeClock:
+    def __init__(self, *readings):
+        self.readings = list(readings)
+
+    def __call__(self):
+        return self.readings.pop(0)
+
+
+def always(reading):
+    return lambda: reading
 
 
 class TestFeedSize(unittest.TestCase):
-    def test_one_byte_past_the_limit_is_read_once(self):
-        stream = FakeStream(10)
-        ics.read_capped(stream, 10)
-        self.assertEqual(stream.asked, [11])
-
     def test_a_feed_at_the_limit_is_returned_whole(self):
-        self.assertEqual(ics.read_capped(FakeStream(10), 10), b"x" * 10)
+        body = ics.read_capped(FakeStream([b"xxxx", b"xxxxxx"]), 10, 100, clock=always(0))
+        self.assertEqual(body, b"x" * 10)
 
     def test_a_feed_over_the_limit_is_refused(self):
         with self.assertRaises(ics.FeedTooLarge):
-            ics.read_capped(FakeStream(11), 10)
+            ics.read_capped(FakeStream([b"xxxxxx", b"xxxxx"]), 10, 100, clock=always(0))
+
+    def test_reading_stops_at_the_chunk_that_passes_the_limit(self):
+        stream = FakeStream([b"xxxxxx", b"xxxxx", b"never read"])
+        with self.assertRaises(ics.FeedTooLarge):
+            ics.read_capped(stream, 10, 100, clock=always(0))
+        self.assertEqual(stream.reads, 2)
+
+    def test_each_read_asks_for_one_chunk(self):
+        stream = mock.Mock()
+        stream.read.side_effect = [b"x", b""]
+        ics.read_capped(stream, 10, 100, clock=always(0))
+        self.assertEqual(stream.read.call_args_list, [mock.call(ics.CHUNK_BYTES), mock.call(ics.CHUNK_BYTES)])
+
+
+class TestFeedDeadline(unittest.TestCase):
+    def test_a_feed_that_arrives_before_the_deadline_is_read(self):
+        body = ics.read_capped(FakeStream([b"a", b"b"]), 10, 100, clock=FakeClock(98, 99, 100))
+        self.assertEqual(body, b"ab")
+
+    def test_a_feed_still_arriving_after_the_deadline_is_refused(self):
+        stream = FakeStream([b"a", b"b", b"c"])
+        with self.assertRaises(ics.FeedProblem):
+            ics.read_capped(stream, 10, 100, clock=FakeClock(99, 101))
+        self.assertEqual(stream.reads, 1)
 
     def test_an_oversized_feed_is_skipped_like_any_broken_feed(self):
         good = "https://feeds.example.invalid/good.ics"

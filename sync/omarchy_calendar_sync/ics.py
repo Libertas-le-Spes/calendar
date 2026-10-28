@@ -20,6 +20,7 @@ on a machine without python-icalendar and python-recurring-ical-events.
 import base64
 import hashlib
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -34,6 +35,8 @@ from .localzone import resolve_local_timezone
 from .resources import build_event
 
 FETCH_TIMEOUT = 30
+FEED_SECONDS = 60
+CHUNK_BYTES = 64 * 1024
 # A feed carries no colour of its own, so each one takes the next of
 # Google's calendar colours, keeping two feeds apart on the grid.
 FEED_COLORS = CALENDAR_COLORS
@@ -219,18 +222,28 @@ class FeedTooLarge(FeedProblem):
 
 def _http_get(url):
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    deadline = time.monotonic() + FEED_SECONDS
     try:
         with web.open_public(request, FETCH_TIMEOUT) as response:
-            return read_capped(response, FEED_BYTES)
+            return read_capped(response, FEED_BYTES, deadline)
     except urllib.error.HTTPError as error:
         raise FeedProblem("the server answered HTTP %d" % error.code) from None
 
 
-def read_capped(stream, limit):
-    body = stream.read(limit + 1)
-    if len(body) > limit:
-        raise FeedTooLarge("the feed is larger than %d bytes" % limit)
-    return body
+def read_capped(stream, limit, deadline, clock=time.monotonic):
+    """The whole body, refused once it passes `limit` bytes or the deadline."""
+    chunks = []
+    size = 0
+    while True:
+        if clock() > deadline:
+            raise FeedProblem("the feed took longer than %d seconds to arrive" % FEED_SECONDS)
+        chunk = stream.read(CHUNK_BYTES)
+        if not chunk:
+            return b"".join(chunks)
+        size += len(chunk)
+        if size > limit:
+            raise FeedTooLarge("the feed is larger than %d bytes" % limit)
+        chunks.append(chunk)
 
 
 def to_node(value, local_tz):

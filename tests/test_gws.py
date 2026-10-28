@@ -549,3 +549,17 @@ class TestCredentialRequests(unittest.TestCase):
         with mock.patch.object(gws.web, "open_with_credential", side_effect=gws.web.RedirectRefused("redirected")):
             with self.assertRaises(gws.GwsApiError):
                 gws._https("GET", gws.CALENDAR_API, {}, None)
+
+
+class TestGwsTimeout(unittest.TestCase):
+    def test_gws_is_given_a_time_limit(self):
+        completed = mock.Mock(returncode=0, stdout="", stderr="")
+        with mock.patch.object(gws.subprocess, "run", return_value=completed) as run:
+            gws._subprocess_runner(["gws", "--version"], {})
+        self.assertEqual(run.call_args.kwargs["timeout"], gws.GWS_SECONDS)
+
+    def test_a_gws_that_does_not_answer_in_time_is_an_api_error(self):
+        expired = gws.subprocess.TimeoutExpired(["gws"], gws.GWS_SECONDS)
+        with mock.patch.object(gws.subprocess, "run", side_effect=expired):
+            with self.assertRaises(gws.GwsApiError):
+                gws._subprocess_runner(["gws", "--version"], {})
