@@ -248,6 +248,8 @@ Column {
     label: root.tr("form.allDay")
     inline: true
     ToggleSwitch {
+      KeyPress { onActivated: root.toggleAllDay() }
+
       checked: root.form.allDay === true
       foreground: root.foreground
       onToggled: root.toggleAllDay()
@@ -285,6 +287,8 @@ Column {
     id: meetRow
     label: root.tr("form.meet")
     ToggleSwitch {
+      KeyPress { onActivated: root.update({ meet: !(root.form.meet === true) }) }
+
       id: meetToggle
       checked: root.form.meet === true
       foreground: root.foreground

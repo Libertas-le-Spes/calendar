@@ -132,6 +132,8 @@ Column {
     TapHandler {
       onDoubleTapped: root.startEditing()
     }
+
+    KeyPress { onActivated: root.startEditing() }
   }
 
   Row {
@@ -193,6 +195,8 @@ Column {
     TapHandler {
       onDoubleTapped: root.lifeCleared()
     }
+
+    KeyPress { onActivated: root.startEditing() }
 
     MouseArea {
       id: lifeMouse

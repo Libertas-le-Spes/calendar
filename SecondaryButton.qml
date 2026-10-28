@@ -10,4 +10,7 @@ Button {
   bordered: true
   fontSize: Style.font.bodySmall
   horizontalPadding: text === "" ? verticalPadding : Style.spacing.controlPaddingX
+  focusable: true
+
+  FocusRing {}
 }

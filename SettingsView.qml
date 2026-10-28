@@ -182,6 +182,8 @@ Item {
           cursorShape: Qt.PointingHandCursor
           onClicked: root.section = navItem.modelData.id
         }
+
+        KeyPress { onActivated: root.section = navItem.modelData.id }
       }
     }
   }

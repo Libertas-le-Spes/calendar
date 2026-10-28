@@ -43,4 +43,6 @@ Rectangle {
     cursorShape: Qt.PointingHandCursor
     onClicked: root.toggled()
   }
+
+  KeyPress { onActivated: root.toggled() }
 }

@@ -55,6 +55,7 @@ Item {
   property bool toastError: false
 
   signal itemSelected(var item)
+  signal itemStepRequested(int direction)
   signal joinRequested(var item)
   signal snoozeRequested(var item)
   signal daySelected(string key)
@@ -72,6 +73,16 @@ Item {
 
   function tr(key, args) {
     return Strings.tr(root.language, key, args)
+  }
+
+  function step(event, direction) {
+    root.itemStepRequested(direction)
+    event.accepted = true
+  }
+
+  function emptyBoxPressed() {
+    if (root.syncState === "missing") root.setupCopyRequested()
+    else if (root.canWrite) root.newEventRequested()
   }
 
   function focusQuickAdd() {
@@ -130,6 +141,16 @@ Item {
 
   Flickable {
     id: scroll
+
+    Item {
+      id: itemKeys
+      readonly property bool ownsArrows: true
+      width: 0
+      height: 0
+      activeFocusOnTab: root.sections.allDay.length > 0 || root.sections.timed.length > 0
+      Keys.onUpPressed: function(event) { root.step(event, -1) }
+      Keys.onDownPressed: function(event) { root.step(event, 1) }
+    }
     anchors.left: parent.left
     anchors.right: parent.right
     anchors.top: header.bottom
@@ -211,6 +232,8 @@ Item {
           onClicked: if (root.syncState === "missing") root.setupCopyRequested()
           onDoubleClicked: if (root.canWrite && root.syncState !== "missing") root.newEventRequested()
         }
+
+        KeyPress { onActivated: root.emptyBoxPressed() }
       }
 
       Column {
@@ -231,6 +254,7 @@ Item {
             width: parent.width
             item: modelData
             selected: modelData.id === root.selectedId
+            listFocused: itemKeys.activeFocus
             snoozable: selected && root.selectedSnoozable
             snoozeText: root.snoozeText
             foreground: root.foreground
@@ -273,6 +297,7 @@ Item {
               width: parent.width
               item: timedEntry.modelData
               selected: timedEntry.modelData.id === root.selectedId
+              listFocused: itemKeys.activeFocus
               snoozable: selected && root.selectedSnoozable
               snoozeText: root.snoozeText
               isToday: root.isToday

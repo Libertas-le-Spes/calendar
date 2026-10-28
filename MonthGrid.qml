@@ -37,6 +37,14 @@ Column {
   }
 
   Item {
+    Item {
+      id: dayKeys
+      readonly property bool ownsArrows: true
+      width: 0
+      height: 0
+      activeFocusOnTab: true
+    }
+
     width: gridColumn.width
     height: gridColumn.height
 
@@ -88,6 +96,8 @@ Column {
             cursorShape: Qt.PointingHandCursor
             onClicked: root.weekStartToggled()
           }
+
+          KeyPress { onActivated: root.weekStartToggled() }
 
           PanelToolTip {
             visible: weekStartMouse.containsMouse
@@ -165,6 +175,11 @@ Column {
                 : dayMouse.containsMouse ? Style.hoverFillFor(root.foreground, Color.accent) : "transparent"
               border.width: modelData.today ? Style.spacing.hairline : 0
               border.color: Style.normalBorderFor(root.foreground, Color.accent)
+
+              FocusRing {
+                target: dayCell
+                shown: dayCell.selected && dayKeys.activeFocus
+              }
 
               Text {
                 textFormat: Text.PlainText
@@ -249,6 +264,8 @@ Column {
     }
 
     PanelActionButton {
+      focusable: true
+      FocusRing {}
       // Pulled out by the button's own padding so the glyph, not its hit
       // box, lines up with the grid's edge.
       anchors.left: parent.left
@@ -262,6 +279,8 @@ Column {
     }
 
     PanelActionButton {
+      focusable: true
+      FocusRing {}
       anchors.right: parent.right
       anchors.rightMargin: -Style.space(8)
       anchors.verticalCenter: parent.verticalCenter

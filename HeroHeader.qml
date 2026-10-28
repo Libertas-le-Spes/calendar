@@ -102,6 +102,8 @@ Item {
     cursorShape: Qt.PointingHandCursor
     onClicked: root.homeRequested()
 
+    KeyPress { onActivated: root.homeRequested() }
+
     PanelToolTip {
       visible: homeMouse.containsMouse
       text: Strings.tr(root.language, "nav.backToToday")
@@ -116,6 +118,8 @@ Item {
     spacing: Style.space(2)
 
     PanelActionButton {
+      focusable: true
+      FocusRing {}
       iconText: root.settingsOpen ? "󰅖" : "󰒓"
       tooltipText: Strings.tr(root.language, root.settingsOpen ? "nav.backToCalendar" : "nav.settings")
       foreground: root.foreground

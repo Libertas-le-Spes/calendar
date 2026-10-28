@@ -92,6 +92,8 @@ Column {
     font.capitalization: Font.AllUppercase
 
     TapHandler { onTapped: root.expanded = !root.expanded }
+
+    KeyPress { onActivated: root.expanded = !root.expanded }
     HoverHandler { cursorShape: Qt.PointingHandCursor }
   }
 
@@ -158,6 +160,8 @@ Column {
             border.color: root.foreground
 
             TapHandler { onTapped: root.patch("colorId", modelData.id) }
+
+            KeyPress { onActivated: root.patch("colorId", modelData.id) }
             HoverHandler { cursorShape: Qt.PointingHandCursor }
           }
         }
@@ -174,6 +178,8 @@ Column {
         controlWidth: permissionToggle.implicitWidth
 
         ToggleSwitch {
+          KeyPress { onActivated: root.patch(modelData, !(root.form[modelData] === true)) }
+
           id: permissionToggle
           checked: root.form[modelData] === true
           foreground: root.foreground

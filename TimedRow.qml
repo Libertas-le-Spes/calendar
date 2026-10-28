@@ -15,6 +15,9 @@ Rectangle {
 
   property var item: ({})
   property bool selected: false
+  property bool listFocused: false
+
+  FocusRing { shown: root.selected && root.listFocused }
   property bool snoozable: false
   property string snoozeText: ""
   property bool isToday: false

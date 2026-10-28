@@ -135,6 +135,8 @@ Column {
         enabled: parent.missing
         onTapped: root.setupCommandCopyRequested()
       }
+
+      KeyPress { onActivated: root.setupCommandCopyRequested() }
     }
   }
 }
