@@ -1,10 +1,11 @@
-"""Adapter around the gws CLI, and the Google Calendar API for writes.
+"""The Google Calendar API, with the sign-in the gws CLI holds.
 
-Reads go through gws. Writes go to the API over HTTPS, with a token made
-from the sign-in gws holds: gws takes a request body only as a --json
-argument, and arguments show an event's description and guests to every
-user on the machine through ps. Everything this module returns is plain
-data, so the rest of the sync is testable without Google.
+Every read and write goes to the API over HTTPS, with a token made from
+that sign-in. gws itself is only asked for its version and the sign-in:
+it takes a query only as a --params argument and a body only as --json,
+and arguments show calendar ids, an event's description and its guests to
+every user on the machine through ps. Everything this module returns is
+plain data, so the rest of the sync is testable without Google.
 """
 
 import json
@@ -24,8 +25,8 @@ FALLBACK_COLOR = "#9e9e9e"
 MAX_PAGES = 50
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
-SIGN_IN_EXPIRED = "Your Google sign-in expired. Run sync/setup --write."
-NO_SIGN_IN = "No Google sign-in to write with. Run sync/setup --write."
+SIGN_IN_EXPIRED = "Your Google sign-in expired. Run sync/setup again."
+NO_SIGN_IN = "No Google sign-in to use. Run sync/setup."
 MASKED_SIGN_IN = "gws did not hand over the sign-in. Update gws, then try again."
 CALENDAR_API = "https://www.googleapis.com/calendar/v3"
 HTTP_TIMEOUT_SECONDS = 30
@@ -151,7 +152,7 @@ class Gws:
             raise GwsTooOld(f"gws {wanted} or newer is required, found {have}")
 
     def calendars(self):
-        payload = self._json(["calendar", "calendarList", "list"])
+        payload = self._api("GET", "/users/me/calendarList", {"maxResults": 250})
         calendars = [
             {
                 "id": item["id"],
@@ -177,8 +178,7 @@ class Gws:
         page_token = None
         for _ in range(MAX_PAGES):
             params = {
-                "calendarId": calendar_id,
-                "singleEvents": True,
+                "singleEvents": "true",
                 "orderBy": "startTime",
                 "timeMin": time_min,
                 "timeMax": time_max,
@@ -186,9 +186,7 @@ class Gws:
             }
             if page_token:
                 params["pageToken"] = page_token
-            payload = self._json(
-                ["calendar", "events", "list", "--params", json.dumps(params)]
-            )
+            payload = self._api("GET", _events_path(calendar_id), params)
             items.extend(payload.get("items", []))
             if len(items) > EVENTS_PER_CALENDAR:
                 raise TooManyEvents(
@@ -202,37 +200,34 @@ class Gws:
         )
 
     def get(self, calendar_id, event_id):
-        return self._json([
-            "calendar", "events", "get",
-            "--params", json.dumps({"calendarId": calendar_id, "eventId": event_id}),
-        ])
+        return self._api("GET", _events_path(calendar_id, event_id), {})
 
     def create(self, calendar_id, body, send_updates="none"):
-        return self._write("POST", _events_path(calendar_id), _write_params(send_updates), body)
+        return self._api("POST", _events_path(calendar_id), _write_params(send_updates), body)
 
     def update(self, calendar_id, event_id, body, send_updates="none"):
         # patch, not update: only the fields in `body` change, so anything
         # the form does not show survives an edit from the panel.
-        return self._write("PATCH", _events_path(calendar_id, event_id), _write_params(send_updates), body)
+        return self._api("PATCH", _events_path(calendar_id, event_id), _write_params(send_updates), body)
 
     def replace(self, calendar_id, event_id, resource, send_updates="none"):
         # PUT: the whole event, so a field left out is removed. The only way
         # to remove a Meet, since a patch cannot.
-        return self._write("PUT", _events_path(calendar_id, event_id), _write_params(send_updates), resource)
+        return self._api("PUT", _events_path(calendar_id, event_id), _write_params(send_updates), resource)
 
     def delete(self, calendar_id, event_id, send_updates="none"):
         # Google answers a delete with HTTP 204 and no body.
-        self._write("DELETE", _events_path(calendar_id, event_id),
-                    {"sendUpdates": _send_updates(send_updates)})
+        self._api("DELETE", _events_path(calendar_id, event_id),
+                  {"sendUpdates": _send_updates(send_updates)})
         return None
 
-    def _write(self, method, path, params, body=None):
+    def _api(self, method, path, params, body=None):
         headers = {"Authorization": "Bearer " + self._token()}
         data = None
         if body is not None:
             headers["Content-Type"] = "application/json"
             data = json.dumps(body).encode("utf-8")
-        status, text = self._http(method, f"{CALENDAR_API}{path}?{urllib.parse.urlencode(params)}", headers, data)
+        status, text = self._http(method, _api_url(path, params), headers, data)
         try:
             payload = json.loads(text) if text.strip() else None
         except json.JSONDecodeError:
@@ -285,38 +280,6 @@ class Gws:
         self._access_token = token
         return token
 
-    def _json(self, args):
-        """Run gws and parse stdout."""
-        return self._parse(*self._run(args))
-
-    def _parse(self, exit_code, stdout, stderr):
-        """Parse one gws reply, or raise the error it carries.
-
-        stderr carries keyring noise on success and on failure, so it is
-        never parsed as data. An API error exits 1 with Google's JSON error
-        on stdout (verified on gws 0.13.2), so stdout is read first. Only
-        when stdout holds no error does a nonzero exit quote stderr, which
-        is then the only place detail can come from.
-        """
-        decode_error = None
-        try:
-            payload = json.loads(stdout)
-        except json.JSONDecodeError as error:
-            payload = None
-            decode_error = error
-
-        if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
-            _raise_api_error(payload["error"])
-
-        if exit_code != 0:
-            excerpt = stderr.strip()[:200] or "no stderr output"
-            raise GwsApiError(f"gws exited with code {exit_code}: {excerpt}")
-
-        if decode_error is not None:
-            raise GwsApiError(f"gws returned unparseable output: {decode_error}") from decode_error
-
-        return payload
-
     def auth_hint(self, cfg):
         return (
             "if this is an auth error, run: "
@@ -324,6 +287,12 @@ class Gws:
             "gws auth login --scopes "
             "https://www.googleapis.com/auth/calendar.readonly"
         )
+
+
+def _api_url(path, params):
+    if not params:
+        return CALENDAR_API + path
+    return f"{CALENDAR_API}{path}?{urllib.parse.urlencode(params)}"
 
 
 def _events_path(calendar_id, event_id=None):
