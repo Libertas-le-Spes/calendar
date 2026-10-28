@@ -210,11 +210,10 @@ entry for, stays as it is unless you pick another one.
 
 The EDS backend cannot write yet, so the panel shows none of this there.
 
-A save goes straight to the Google Calendar API over HTTPS, with a token
-made from the sign-in gws already holds. The event, its description and its
-guests never appear in the arguments of a process, so the other users of
-the machine cannot see them through `ps`. Reading your calendar still goes
-through gws.
+Reading and saving both go straight to the Google Calendar API over HTTPS,
+with a token made from the sign-in gws already holds. Calendar ids, the
+event, its description and its guests never appear in the arguments of a
+process, so the other users of the machine cannot see them through `ps`.
 
 ## Sync from the secret iCal address
 
@@ -227,10 +226,11 @@ project, no OAuth client, no consent screen, no Evolution. Suggested in #32.
 ```
 
 It asks for the address (Google Calendar on the web: Settings > your calendar >
-Integrate calendar > *Secret address in iCal format*), runs a test sync, then
-writes it to `~/.config/omarchy/calendar-sync.json` with mode 600 and installs
-the timer. If the test sync fails, your current config stays as it was. Or by
-hand:
+Integrate calendar > *Secret address in iCal format*), stores it in your
+keyring, runs a test sync, then writes `~/.config/omarchy/calendar-sync.json`,
+which names the feed by a keyring id only, and installs the timer. If the test
+sync fails, your current config stays as it was. Without a keyring, the address
+goes into the config itself, readable by you alone. Or by hand:
 
 ```json
 {
@@ -243,8 +243,15 @@ hand:
 }
 ```
 
-Needs `python-icalendar` and `python-recurring-ical-events` (the setup installs
-them). Any https or webcal iCal feed works, not only Google's.
+An address in the config is a password, so the sync refuses to read it from a
+file that other users can read: `chmod 600 ~/.config/omarchy/calendar-sync.json`.
+It also refuses any config other users can change, since it names a program
+the timer runs.
+
+Needs `python-icalendar` 7.2.2 or newer and `python-recurring-ical-events`
+(the setup installs them). Any https or webcal iCal feed works, not only
+Google's. Plain `http` is refused, and so is an address with a user name or
+password in it. A feed has 60 seconds and 16 MB to arrive.
 
 The trade: no creating or editing events, and Google refreshes the feed on its
 own schedule so a change can take a while to show up. The feed carries no link
@@ -393,6 +400,9 @@ Rules a writer has to follow:
   midnight tells you nothing.
 - Write the file atomically, temp file then rename. The widget watches it.
 - Unknown fields are ignored, so you can add your own.
+- The widget shows nothing from a file over 16 MB or with more than 8,000
+  rows, and says the file is too large. The bundled sync also keeps a title
+  or location to 500 characters, a calendar name to 200 and a link to 2048.
 
 `tests/fixtures/calendar-events.json` is a valid two-event file to start from.
 
@@ -476,6 +486,14 @@ Sync behaviour lives in `~/.config/omarchy/calendar-sync.json`:
 `include: []` means all of them. Names and ids both match. `gwsPath` has to be
 absolute: a systemd user service does not inherit your shell's `PATH`, so a
 `gws` installed by bun, cargo or pipx is invisible to it under its bare name.
+Each side of the window is at most 366 days.
+
+Everything in an event can be written by whoever sent the invitation or
+publishes the feed, so the sync bounds what one calendar can cost it: rows
+stop at the window, a repeating event that would expand to more than 200,000
+occurrences is left out, and a calendar with more than 2,000 events in the
+window is skipped. The journal names the calendar in each case, and the other
+calendars still update. A run that takes longer than 5 minutes is stopped.
 
 ## Troubleshooting
 
@@ -495,7 +513,11 @@ systemctl --user list-timers omarchy-calendar-sync.timer
 | `Not in a workspace` during setup, or setup says gws is not the Google Workspace CLI | Another program named `gws` comes first on your PATH, for example the git workspace helper. Pass the right one: `GWS=/absolute/path/to/gws sync/setup` |
 | The panel says "No calendar synced yet" | The events file does not exist. The sync has never completed |
 | The panel says the calendar may be out of date | The file exists but `syncedAt` is old. Check the journal above |
-| An event shows up twice | Two of your calendars both carry it. Hide one in settings. The sync already drops exact duplicates by iCalUID and start time |
+| An event shows up twice | Two of your calendars both carry it. Hide one in settings. The sync drops a copy that says the same as the first one, or any copy of an event in your primary calendar. Copies that differ are both shown, so no calendar can hide or replace another's event |
+| `config error: ... holds feed addresses that other users can read` | The config is readable by other users. `chmod 600 ~/.config/omarchy/calendar-sync.json`, or run `sync/setup --ics` to move the addresses into your keyring |
+| `skipping keyring feed ics-...: the keyring holds no address for this feed` | The keyring was locked when the sync ran, or the address was removed from it. Unlock it, or run `sync/setup --ics` again |
+| `skipping calendar '...': more than 2000 events in the sync window` | One calendar holds more events than a real calendar would. Exclude it under `calendars.exclude`, or find the event that floods it |
+| The panel says the events file is too large to show | Something wrote more than 16 MB or 8,000 rows. The bundled sync never does; check any other writer |
 | `The project ID you specified is already in use` during setup | Fixed in 0.1.1. Google Cloud project ids are unique across all of Google, and older versions hardcoded one. Update the plugin, or pass your own: `PROJECT_ID=something-unique sync/setup` |
 | Clicking an event opens your calendar but not the event | The link resolves only for the Google account the sync authenticated as. If your browser opens it in a profile signed into a different account, Google falls back to the calendar root. Route `google.com/calendar` to the profile holding that account |
 | The Join button never appears | It only shows from 15 minutes before the start until 15 minutes after the end, and only when the event has a video link |
@@ -522,6 +544,13 @@ from your Google Cloud console to revoke properly.
 cd sync && PYTHONPATH=. python3 -m unittest discover -s ../tests -t .. -v
 node --test tests/*.test.js
 ```
+
+The same two commands run on every pull request, in an Arch Linux container
+(`.github/workflows/tests.yml`). `tests/test_architecture.py` holds the rules
+the code relies on: text from events is always shown as plain text, nothing
+starts a process through a shell, and the workflow keeps read-only
+permissions and pinned actions. `docs/security-review.md` says why each
+limit is there.
 
 No dependencies, no dev dependencies. The Python sync is standard library only
 and the QML logic lives in `Model.js` and `QuickAddParser.js`, which load under

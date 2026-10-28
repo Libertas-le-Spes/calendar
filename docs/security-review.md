@@ -1,10 +1,22 @@
 # Security review
 
 This review covers the repository at commit `1b1a4983bf617485fe223fab6a11f1eb5113d9e0` (release 0.7.0), read on 2026-10-22.
-Some of what it proposes is planned and not done yet. The code will keep changing, and this document with it. When you fix
-a finding, or change something this document describes, update the document in the same pull request.
+The code will keep changing, and this document with it. When you change something this document describes, update the
+document in the same pull request. Every example below uses made-up names, addresses and times.
 
-No code was changed for this review. Every example below uses made-up names, addresses and times.
+**Status, 2026-10-28.** Every finding is fixed on the branch `security-review-calendar`: F1 to F11 from this review, and
+N1 to N8 from a second, independent review that looked for what this one missed. The table below says what was done
+for each one. In three places the fix differs from what this review first recommended:
+
+- **F1-B, lazy expansion.** `recurring-ical-events`' `after()` walks forward in steps that shrink to 15 minutes while
+  any event is still going on. An event lasting a thousand years is going on in every step, so the open-ended walk
+  never ends: it is a way to hang the sync, not a cure. Expansion stays a closed window (`between()`), and each repeat
+  rule's cost is worked out from the rule before anything is expanded (`repeat_cost.py`).
+- **F1-D, the contract ceiling.** Refusing the whole document over one oversized event would let that event stop every
+  calendar from updating, which is N1. The ceiling is still in `contract.validate`, but the sync drops each row that
+  breaks the contract before the check, so only a document too large as a whole is refused.
+- **N4, duplicate events.** Preferring a copy from a calendar the user can write was considered and left out: anyone can
+  share a calendar and grant write access. Only the primary calendar counts as the user's own.
 
 ## What this project is, in one paragraph
 
@@ -47,6 +59,30 @@ Informational.
 | F9  | Info     | No CI, and the safety rules the code follows are not enforced by any test | repository (no `.github/`) |
 | F10 | Info     | No minimum version for `python-icalendar`, which has had denial-of-service fixes in 2026 | `sync/omarchy_calendar_sync/ics.py:47` |
 | F11 | Info     | Setup leaves the client secret readable for a moment, and the profile folder open to others | `sync/setup:372` |
+
+What was done, and what each fix still fails to stop:
+
+| ID  | Fixed by | Still not stopped |
+|-----|----------|-------------------|
+| F1  | Rows stop at the window (at most 366 days each way). A repeat rule's cost is estimated from the rule, and a series over 200,000 steps is left out; a calendar over 1,000,000 steps or 2,000 events in the window is skipped, in every backend. A feed body over 16 MB is refused. The file holds at most 8,000 rows and 16 MB, and every text field has a length limit. The widget refuses a file over those ceilings before parsing it (`EventsFile.js`), and a test keeps both sides' numbers equal. | A calendar flooded with thousands of separate events is skipped as a whole, so its real events go too. The journal names it. |
+| F2  | One `https`-only opener (`web.py`): no handler for any other scheme, and a redirect is followed only to another `https` address. Setup and the sync share one address rule: `https`, a host, no user name or password, no spaces, control characters or backslashes. | Nothing found. |
+| F3  | Every failure is caught per feed. Only the sync's own messages, or the error's kind, are printed. `redact()` keeps scheme and host only, and every printed line has the address's path and query removed as a last layer. | Nothing found. |
+| F4  | `setup --ics` stores each address in the keyring; the config names it by id. Every config is written 600. The sync refuses a config another user owns or can change, one in a folder others can change, and one others can read while it holds a plain address. Choosing the Google sync drops the feeds from the config and the keyring. | Programs running as the user can still ask the keyring while it is unlocked. |
+| F5  | The reminder body is escaped. | Nothing found. |
+| F6  | Reads go to the Calendar API over HTTPS, like writes. `gws` is asked only for its version and the sign-in. | The sign-in passes through the sync's memory on every run, not only on writes. |
+| F7  | The address comes first in a suggestion; names are kept to 100 characters and addresses to 254. | Nothing found. |
+| F8  | Join names the service only for known meeting hosts, else the host the link really opens, else nothing for a host in letters that could pass for another. | A user who clicks through a link to a host they do not know. |
+| F9  | `.github/workflows/tests.yml` runs both suites, read only, pinned by commit and digest. `tests/test_architecture.py` holds the plain-text rule, the no-shell rule and the workflow's own terms. | A rule nobody has written down as a test yet. |
+| F10 | The sync refuses `python-icalendar` older than 7.2.2. | Nothing found. |
+| F11 | The profile is created 700 under a private umask, and the client secret installed 600 in one step, from the newest download. | Nothing found. The README's install command still names tmn73's repository: deciding which repository installs track is left to the owner. |
+| N1  | See below. | Nothing found. |
+| N2  | A feed has 60 seconds to arrive, read in 64 KB chunks; `gws` has 60 seconds; the unit stops a run after 5 minutes, 1 GB or 64 tasks. | An EDS call that hangs costs the whole run, until the unit stops it. |
+| N3  | The link rule refuses a user name and a backslash; Jitsi means `meet.jit.si`. Both suites test the same list of cases (`tests/fixtures/link-cases.json`). | Nothing found. |
+| N4  | A copy is dropped only when it says the same as the first one, or the first is in the primary calendar. | A copy in the primary calendar still wins over any other. |
+| N5  | Every `python3` in setup runs with `-I`. | Nothing found. |
+| N6  | At most 64 KB of a description is read. | Nothing found. |
+| N7  | The unit runs with no new privileges, `/usr` and `/etc` read only, a private `/tmp`, a system-service syscall set and four socket families. `systemd-analyze security` goes from 9.2 to 5.8. | Reading the user's other files and sending them out; home stays writable because `gws` keeps its sign-in in whichever profile the config names. |
+| N8  | Google requests carrying the token follow no redirect at all. | Nothing found. |
 
 ---
 
@@ -316,6 +352,33 @@ copy.
 The README's install command points at `github.com/tmn73/omarchy-calendar`. Every install runs whatever that repository
 serves, in the shell process and in the timer, so it is worth deciding deliberately which repository each install tracks.
 
+## Findings from the second review
+
+A second review, done without this document's conclusions, found these.
+
+- **N1 (Medium): one bad feed or event stopped every calendar from updating.** One invalid row failed the whole document,
+  and one feed whose repeats could not be expanded failed the whole run. An 8-digit `#RRGGBBAA` feed colour was enough.
+  Now a row that breaks the contract is dropped and counted per calendar, a colour outside `#rrggbb` takes a palette
+  colour, and a calendar that cannot be read on its own is skipped. When every calendar is skipped, nothing is written.
+- **N2 (Low): a sync run had no overall time limit.** A feed sending one byte at a time kept each read inside its timeout,
+  and a oneshot unit has no start timeout, so the timer never ran again until reboot.
+- **N3 (Low): the Join label could name a different site from the one the link opened.** Browsers read `\` as `/`, so
+  `https://evil.example\@meet.google.com/...` was labelled Google Meet, and the reminder opened `evil.example`. Any host
+  with a `jitsi.` label was called Jitsi.
+- **N4 (Low): an event from one calendar could replace the same event in another.** Copies matched on UID and start, which
+  anyone invited knows, and the first calendar's copy won.
+- **N5 (Low): setup ran Python code from the folder it was started in.** `python3 -c` and `python3 -` import from the
+  current folder first, so a planted `json.py` ran.
+- **N6 (Info): parsing a description with nested links took quadratic time.**
+- **N7 (Info): the systemd unit had no hardening.**
+- **N8 (Info): the token followed a redirect.** `urllib` keeps the `Authorization` header across a redirect, even to
+  another host.
+
+It also corrected this review in four places: F1 missed that EDS expands repeats without a cap and that `gws` fails the
+whole sync past its page limit; F3 missed that a caught error's message could quote the address and that `redact()` kept
+a user name and password; F4 missed that a config others can write means running their code, because it names
+`gwsPath`; F11 missed that setup installed whichever client secret download it found first.
+
 ## What was checked and found sound
 
 | Area | What the code does |
@@ -327,34 +390,18 @@ serves, in the shell process and in the timer, so it is worth deciding deliberat
 | Descriptions | HTML is reduced to text and capped at 1,500 characters (`plaintext.py`). |
 | Secrets in process arguments | Feed addresses go to Python on stdin and file descriptor 3 (`setup:103`, `setup:124`). Event requests go on stdin (`Panel.qml:749`). The Google refresh token is read from `gws` stdout and sent over HTTPS, never as an argument (`gws.py:238`). |
 | TLS | Python's default context verifies certificates and host names (PEP 476). Nothing turns that off. |
-| Feed address in logs and in the events file | `redact()` keeps only the host. Calendar ids for feeds are a hash, so the address never reaches the events file (`ics.py:76`). Gap: F3. |
+| Feed address in logs and in the events file | `redact()` keeps only the host. Calendar ids for feeds are a hash, so the address never reaches the events file (`ics.py:76`). The gaps found in F3 are fixed. |
 | Events file | Atomic temp file and rename. Mode 600 (measured: `0o600`). The folder belongs to the user, so no symlink race is possible. |
 | Event command | Checks the calendar against the writable list, and `action`, `scope` and `sendUpdates` against fixed lists. Ids are URL-encoded (`writes.py`, `gws.py:94`). |
 | Local ports and IPC | None. The only IPC is Quickshell's own `IpcHandler`, on the user's runtime folder (mode 700). Unlike the issue recently fixed in a sibling project, there is no localhost page or token another user could reach. |
 | Reminder state | Lives under `XDG_RUNTIME_DIR` (mode 700), written atomically. |
-| GitHub Actions | None exist, so there is nothing to misconfigure yet. See F9. |
+| GitHub Actions | One workflow, read only, `pull_request` and `push` to main only, pinned by commit and digest. A test holds it to those terms. |
 | Python dependencies | Standard library only, plus the optional `python-icalendar` and `python-recurring-ical-events`, and GObject bindings for EDS. |
 
 ## Step plan
 
-The steps are ordered by safety, not by ease. Each one is small enough to ship by itself, and each one updates this document.
-
-1. **F1-A, clip covered days to the window.** Add a test with a made-up long-span event. This is the cheapest variant to
-   trigger, so it goes first.
-2. **F1-D, a ceiling on rows and field lengths in the contract.** From here on, the bundled sync can never hand the widget an
-   oversized file.
-3. **F1-B, lazy repeat expansion with a cap**, with a test using a made-up every-second rule.
-4. **F1-C, a byte cap on feed reads**, with a test using a fake fetch.
-5. **F1-E, a capped `Model.eventsFromDocument`** used by `BarWidget.qml`, with a Node test.
-6. **F9, a CI workflow and the two architecture tests.** These seal every rule the code already keeps.
-7. **F2, `https` only and no downgrade on redirect**, behind one `FeedUrl` type.
-8. **F3, feed failures caught per feed and per event**, with the test that the secret never appears in the output.
-9. **F4, refuse a loose config, write mode 600, drop stale `ics` entries.** Later, move the addresses to the Secret Service.
-10. **F5, escape the reminder body.**
-11. **F10, a minimum `icalendar` version check.**
-12. **F7, guest label with the address always visible.**
-13. **F11, setup file modes.**
-14. **F6, reads over HTTPS instead of through `gws` arguments.**
+Done, in this order of safety, on `security-review-calendar`: F1 (window, repeat cost, feed size, contract ceiling, the
+widget's own cap), N1, F2, F3 and N8, N2 and N7, F4 with F10, F11 and N5, F5 with F8 and N3, F7, N4, F6, then F9.
 
 ## How this was checked
 
