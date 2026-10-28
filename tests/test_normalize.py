@@ -1,5 +1,7 @@
 from datetime import date
+import json
 import unittest
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from omarchy_calendar_sync import contract, normalize
@@ -355,6 +357,12 @@ class TestUrlGuardMatchesTheWidget(unittest.TestCase):
             event["hangoutLink"] = hostile
             rows = normalize.normalize_event(event, CAL, BOGOTA, WIDE_WINDOW)
             self.assertEqual(rows[0]["meetingUrl"], "", hostile)
+
+    def test_the_sync_agrees_with_every_shared_link_case(self):
+        cases = json.loads((Path(__file__).parent / "fixtures" / "link-cases.json").read_text())
+        for case in cases:
+            with self.subTest(link=case["link"]):
+                self.assertEqual(contract.is_https_url(case["link"]), case["safe"])
 
     def test_an_ordinary_link_still_passes(self):
         event = timed("2026-08-10T09:00:00-05:00", "2026-08-10T09:15:00-05:00")

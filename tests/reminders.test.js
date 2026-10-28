@@ -211,6 +211,17 @@ test('reminderBody: an all-day event is its day', () => {
   assert.equal(Model.reminderBody(holiday, localMs(2026, 9, 6, 15, 0), 'pt', clock, weekday), 'Amanhã · dia todo')
 })
 
+test('reminderBody: tags in a location show as typed rather than as formatting', () => {
+  const styled = event({ location: '<font color="#ff0000">Moved: see email</font>' })
+  assert.equal(Model.reminderBody(styled, START - 10 * MIN, 'en', clock, weekday),
+    '13:00–13:45 · &lt;font color="#ff0000"&gt;Moved: see email&lt;/font&gt;')
+})
+
+test('reminderBody: an ampersand is escaped before the tags it could otherwise forge', () => {
+  const room = event({ location: 'Room &lt;3&gt;' })
+  assert.equal(Model.reminderBody(room, START - 10 * MIN, 'en', clock, weekday), '13:00–13:45 · Room &amp;lt;3&amp;gt;')
+})
+
 test('notificationArg keeps option-looking text as text', () => {
   assert.equal(Model.notificationArg('-g evil'), '⁠-g evil')
   assert.equal(Model.notificationArg('--exec'), '⁠--exec')

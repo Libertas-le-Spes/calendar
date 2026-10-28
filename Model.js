@@ -453,10 +453,11 @@ function visibleEvents(events, hidden, options) {
 
 // Only https is ever launched. A meeting link is supplied by whoever sent the
 // invitation, so treating it as trusted input would be a mistake.
+var SAFE_URL = /^https:\/\/[^\s"'<>\\@\/?#\x00-\x1f\x7f]+(?:[\/?#][^\s"'<>\\\x00-\x1f\x7f]*)?$/
+
 function safeUrl(url) {
   var candidate = text(url).trim()
-  if (candidate.indexOf("https://") !== 0) return ""
-  if (/[\s"'<>]/.test(candidate)) return ""
+  if (!SAFE_URL.test(candidate)) return ""
   return candidate
 }
 
@@ -475,19 +476,18 @@ var MEETING_HOSTS = [
   { pattern: /(^|\.)zoom\.(us|com)$/, name: "Zoom" },
   { pattern: /^teams\.(microsoft|live)\.com$/, name: "Teams" },
   { pattern: /(^|\.)webex\.com$/, name: "Webex" },
-  { pattern: /^meet\.jit\.si$|(^|\.)jitsi\./, name: "Jitsi" },
+  { pattern: /^meet\.jit\.si$/, name: "Jitsi" },
   { pattern: /(^|\.)whereby\.com$/, name: "Whereby" }
 ]
 
-// The service behind a meeting link, for "Join Zoom" rather than a bare
-// "Join". "" for anything unknown or unsafe.
 function meetingHost(url) {
-  var match = safeUrl(url).match(/^https:\/\/(?:[^\/?#@]*@)?([^\/?#:]+)/)
+  var match = safeUrl(url).match(/^https:\/\/([^\/?#:]+)/)
   if (!match) return ""
   var host = match[1].toLowerCase()
   for (var i = 0; i < MEETING_HOSTS.length; i++)
     if (MEETING_HOSTS[i].pattern.test(host)) return MEETING_HOSTS[i].name
-  return ""
+  if (!/^[a-z0-9.-]+$/.test(host)) return ""
+  return host
 }
 
 // encodeURIComponent leaves ' ( ) ! * alone, and safeUrl refuses a quote,
@@ -1074,7 +1074,7 @@ function reminderHeadline(event, nowMs, lang) {
 // caller passes formatTime(ms) and formatWeekday(ms).
 function reminderBody(event, nowMs, lang, formatTime, formatWeekday) {
   if (event.allDay)
-    return capitalized(relativeTime(event, nowMs, lang)) + " · " + Strings.tr(lang, "insp.allDay")
+    return escapedMarkup(capitalized(relativeTime(event, nowMs, lang)) + " · " + Strings.tr(lang, "insp.allDay"))
 
   var range = timeRange(event)
   var parts = []
@@ -1088,7 +1088,11 @@ function reminderBody(event, nowMs, lang, formatTime, formatWeekday) {
 
   var where = meetingHost(meetingUrlFor(event)) || truncateTitle(text(event.location).trim(), 48)
   if (where) parts.push(where)
-  return parts.join(" · ")
+  return escapedMarkup(parts.join(" · "))
+}
+
+function escapedMarkup(value) {
+  return text(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 }
 
 // omarchy-notification-send reads a leading "-g" or "--app-name=…" as an

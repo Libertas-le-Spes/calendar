@@ -66,7 +66,10 @@ _COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 # widget must never be handed a scheme it would be unwise to launch. Must
 # match Model.safeUrl exactly: when the widget is stricter than the sync, a
 # URL is written, then silently refused, and there is no button and no error.
-_HTTPS_URL = re.compile(r"^https://[^\s\"'<>]+$")
+_HTTPS_URL = re.compile(
+    r"^https://[^\s\"'<>\\@/?#\x00-\x1f\x7f]+"
+    r"(?:[/?#][^\s\"'<>\\\x00-\x1f\x7f]*)?$"
+)
 
 
 CALENDAR_COLORS = ("#4285f4", "#f6bf26", "#33b679", "#e67c73", "#8e24aa", "#f4511e", "#039be5", "#7986cb")
