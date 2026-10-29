@@ -1,6 +1,7 @@
 """Entry point. Orchestrates config, a backend, normalization, and the write."""
 
 import argparse
+import json
 import os
 import sys
 import tempfile
@@ -67,7 +68,8 @@ def _drop_duplicates(gevents, seen, calendar):
     """Filter copies of events seen in an earlier calendar. Mutates `seen`.
 
     The primary calendar goes first and the rest follow by name. A later
-    copy is left out when it says the same as the first one, or when the
+    copy is left out when it says the same as the first one (title, end,
+    link, location, description and reminders), or when the
     first came from the primary calendar. A copy that differs from one in
     any other calendar is kept, so no calendar can hide or replace an event
     that another calendar shows. Write access proves nothing here: anyone
@@ -95,10 +97,14 @@ def _covered_by(first, gevent):
 
 
 def _content(gevent):
+    """Everything about a copy the user would see or be reminded by."""
     return (
         _text_of(gevent, "summary"),
         _end_of(gevent),
         normalize.meeting_url(gevent),
+        _text_of(gevent, "location"),
+        _text_of(gevent, "description"),
+        json.dumps(gevent.get("reminders"), sort_keys=True),
     )
 
 
@@ -120,6 +126,10 @@ def _end_of(gevent):
 
 def _is_own(calendar):
     return calendar.get("primary") is True
+
+
+def _writes(cfg, client):
+    return cfg.get("write") is True and getattr(client, "can_write", False) is True
 
 
 def _give_usable_colors(calendars):
@@ -163,6 +173,7 @@ def run(client, cfg, now, out_path, local_tz):
         rows = []
         seen = {}
         fetched = []
+        wants_guests = _writes(cfg, client)
         skipped = 0
         budget = RowBudget()
         for calendar in calendars:
@@ -178,7 +189,8 @@ def run(client, cfg, now, out_path, local_tz):
                 skipped += 1
                 continue
             seen = seen_with_these
-            fetched.extend(fresh)
+            if wants_guests:
+                fetched.extend(fresh)
             rows.extend(calendar_rows)
 
         if calendars and skipped == len(calendars):
@@ -198,7 +210,7 @@ def run(client, cfg, now, out_path, local_tz):
     # The panel offers edits only for these. Only when the user turned
     # writing on and the backend can write; otherwise the key is absent.
     writable = []
-    if cfg.get("write") and getattr(client, "can_write", False):
+    if _writes(cfg, client):
         writable = [
             {"id": c["id"], "name": c["name"], "color": c["color"]}
             for c in calendars

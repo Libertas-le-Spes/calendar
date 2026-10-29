@@ -251,7 +251,10 @@ the timer runs.
 Needs `python-icalendar` 7.2.2 or newer and `python-recurring-ical-events`
 (the setup installs them). Any https or webcal iCal feed works, not only
 Google's. Plain `http` is refused, and so is an address with a user name or
-password in it. A feed has 60 seconds and 16 MB to arrive.
+password in it. A feed has 60 seconds and 16 MB to arrive. It is then read in a
+process of its own, limited to 768 MB and 60 seconds, whose answer the sync reads
+only up to 64 MB, so a feed that needs more costs only itself. All feeds share
+four minutes a run.
 
 The trade: no creating or editing events, and Google refreshes the feed on its
 own schedule so a change can take a while to show up. The feed carries no link
@@ -508,10 +511,12 @@ publishes the feed, so the sync bounds what one calendar can cost it: rows
 stop at the window, and a repeating event is left out when expanding it
 would walk more than 200,000 dates: its periods up to the window's end or
 its UNTIL, times the dates each period can hold. A yearly birthday from 1970
-walks 57. A calendar whose repeats take longer than 10 seconds to expand,
+walks 57 years. A repeating event whose dates or rule cannot be read is left out
+on its own. A calendar whose events take more than 60 seconds or 768 MB to read,
 that holds more than 2,000 events in the window, or whose rows would take the
-events file past 8,000 rows or 16 MB is skipped. The journal names the calendar in each case, and the other
-calendars still update. A run that takes longer than 5 minutes is stopped.
+events file past 8,000 rows or 16 MB (less 1 MB kept for the file's other parts) is skipped. The journal names the calendar in each case, and the other
+calendars still update. A run that takes longer than 5 minutes or 1.5 GB of
+memory is stopped.
 
 ## Troubleshooting
 
@@ -532,11 +537,21 @@ systemctl --user list-timers omarchy-calendar-sync.timer
 | The panel says "No calendar synced yet" | The events file does not exist. The sync has never completed |
 | The panel says the calendar may be out of date | The file exists but `syncedAt` is old. Check the journal above |
 | An event shows up twice | Two of your calendars both carry it. Hide one in settings. The sync drops a copy that says the same as the first one, or any copy of an event in your primary calendar. Copies that differ are both shown, so no calendar can hide or replace another's event |
+| `config error: ... is in a folder other users can change` | `~/.config/omarchy` can be written by others, so the config could be swapped. `chmod go-w ~/.config/omarchy` |
 | `config error: ... holds feed addresses that other users can read` | The config is readable by other users. `chmod 600 ~/.config/omarchy/calendar-sync.json`, or run `sync/setup --ics` to move the addresses into your keyring |
 | `skipping keyring feed ics-...: the keyring holds no address for this feed` | The keyring was locked when the sync ran, or the address was removed from it. Unlock it, or run `sync/setup --ics` again |
 | `skipping calendar '...': more than 2000 events in the sync window` | One calendar holds more events than a real calendar would. Exclude it under `calendars.exclude`, or find the event that floods it |
+| `skipping calendar '...': its events need more memory than one feed may use` | The feed is too large or too complex to read within 768 MB. It is skipped; the other feeds update |
+| `skipping N entries in ...: they cannot be read or repeat too often to expand` | Those events are left out; the rest of that calendar updates |
+| `skipping N events in ...: they cannot be read` | Those occurrences could not be turned into events, and only they are missing |
+| `skipping calendar '...': reading the feed took longer than N seconds` | Its process did not answer in time; only that calendar is skipped |
+| `skipping calendar '...': reading the feed ran out of memory or stopped` | Its process was stopped; only that calendar is skipped |
+| `skipping calendar '...': reading the feed gave an answer larger than 67108864 bytes` or `gave no answer` | Its process answered with more than the sync reads, or nothing usable; only that calendar is skipped |
+| `skipping calendar '...': no time was left in this run to read its events` | Earlier feeds used the run's four minutes; it is read on the next run |
+| `config error: ... belongs to another user` | Another user owns your config. Remove it and run `sync/setup` again as yourself |
+| `config error: ... can be changed by other users` | `chmod 600 ~/.config/omarchy/calendar-sync.json` |
 | `skipping calendar '...': its events would make the events file too large` | That calendar alone would take the file past 8,000 rows or 16 MB, often through events that last for months. The other calendars are written |
-| `skipping calendar '...': its events took longer than 10 seconds to expand` | A repeating event in it cannot be expanded in reasonable time, for example one whose rule never matches a date. The other calendars are written |
+| `skipping calendar '...': its events took longer than 60 seconds to read` | Something in it cannot be expanded in reasonable time, for example one whose rule never matches a date. The other calendars are written |
 | The panel says the events file is too large to show | Something wrote more than 16 MB or 8,000 rows. The bundled sync never does; check any other writer |
 | `The project ID you specified is already in use` during setup | Fixed in 0.1.1. Google Cloud project ids are unique across all of Google, and older versions hardcoded one. Update the plugin, or pass your own: `PROJECT_ID=something-unique sync/setup` |
 | Clicking an event opens your calendar but not the event | The link resolves only for the Google account the sync authenticated as. If your browser opens it in a profile signed into a different account, Google falls back to the calendar root. Route `google.com/calendar` to the profile holding that account |

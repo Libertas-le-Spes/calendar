@@ -19,16 +19,18 @@ on a machine without python-icalendar and python-recurring-ical-events.
 
 import base64
 import re
+import time
 import urllib.parse
-from datetime import date, datetime, timedelta
 
 from . import keyring
 from .errors import CalendarUnreadable, FeedProblem, SyncError
 from .feed_download import download
-from .feed_expansion import affordable_calendar, occurrences_in_window
+from .feed_header import feed_header
+from .feed_request import describe_zone
 from .feeds import feed_url, parse_feeds, redact, scrubbed, unsafe_reason
+from .limits import DOWNLOAD_RESERVE_SECONDS, RUN_SECONDS, WORKER_MARGIN_SECONDS, WORKER_SECONDS
 from .localzone import resolve_local_timezone
-from .resources import build_event
+from .worker_process import WorkerFailed, run_worker
 
 MINIMUM_ICALENDAR = (7, 2, 2)
 
@@ -56,7 +58,6 @@ def _load_libs():
 
 _GOOGLE_HOSTS = ("calendar.google.com", "www.google.com")
 _GOOGLE_FEED_PATH = re.compile(r"^/calendar/ical/([^/]+)/(?:private-[^/]+|public)/basic\.ics$")
-_GOOGLE_UID_SUFFIX = "@google.com"
 
 
 def google_calendar_id(url):
@@ -68,128 +69,18 @@ def google_calendar_id(url):
     return urllib.parse.unquote(match.group(1))
 
 
-def google_event_url(uid, calendar_id):
-    """Google Calendar's page for an event, or blank when it cannot be built.
-
-    The feed carries no link, but Google's own link is the event id and the
-    calendar id, space separated, in unpadded base64url. The id is the UID
-    minus "@google.com"; an event imported from elsewhere keeps a foreign UID
-    and an id the feed never reveals. A recurring event's UID names the
-    series, so every occurrence opens the series.
-    """
-    if not calendar_id or not uid.endswith(_GOOGLE_UID_SUFFIX):
-        return ""
-    event_id = uid[: -len(_GOOGLE_UID_SUFFIX)]
-    eid = base64.urlsafe_b64encode(("%s %s" % (event_id, calendar_id)).encode())
-    return "https://calendar.google.com/calendar/event?eid=" + eid.decode().rstrip("=")
-
-
-def to_node(value, local_tz):
-    """A date or datetime from icalendar as a Google start/end node.
-
-    A floating time (no TZID, no Z) means "local time wherever you are" in
-    iCalendar, so it is pinned to the local zone rather than refused.
-    """
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=local_tz)
-        return {"dateTime": value.isoformat()}
-    if isinstance(value, date):
-        return {"date": value.isoformat()}
-    return None
-
-
-def _text(component, name):
-    value = component.get(name)
-    return str(value) if value is not None else ""
-
-
-def _own_partstat(component, identity):
-    """The PARTSTAT of the attendee matching `identity`, or blank."""
-    if not identity:
-        return ""
-    wanted = "mailto:%s" % identity.strip().lower()
-    attendees = component.get("ATTENDEE")
-    if attendees is None:
-        return ""
-    if not isinstance(attendees, list):
-        attendees = [attendees]
-    for attendee in attendees:
-        if str(attendee).strip().lower() == wanted:
-            return str(getattr(attendee, "params", {}).get("PARTSTAT", ""))
-    return ""
-
-
-def _popup_reminders(component):
-    """Minutes before the start of the VALARMs that show or sound something.
-
-    Alarms tied to the end or to an absolute time are left out: the contract
-    counts back from the start. EMAIL alarms are not the widget's to raise.
-    """
-    minutes = set()
-    for alarm in component.walk("VALARM"):
-        if str(alarm.get("ACTION") or "").upper() not in ("DISPLAY", "AUDIO"):
-            continue
-        # getattr: a malformed TRIGGER must cost one alarm, not the whole sync.
-        trigger = alarm.get("TRIGGER")
-        related = getattr(trigger, "params", {}).get("RELATED", "START")
-        if str(related).upper() != "START":
-            continue
-        offset = getattr(trigger, "dt", None)
-        if isinstance(offset, timedelta) and offset <= timedelta(0):
-            minutes.add(int(-offset.total_seconds()) // 60)
-    return sorted(minutes)
-
-
-def occurrence_to_event(component, local_tz, identity="", calendar_id=""):
-    """One expanded VEVENT occurrence as a Google event resource.
-
-    `calendar_id` is the Google calendar the feed belongs to, blank for a
-    feed from anywhere else.
-    """
-    start = component.get("DTSTART")
-    if start is None:
-        return None
-    start_value = start.dt
-
-    end_value = None
-    if component.get("DTEND") is not None:
-        end_value = component["DTEND"].dt
-    elif component.get("DURATION") is not None:
-        end_value = start_value + component["DURATION"].dt
-    elif isinstance(start_value, datetime):
-        end_value = start_value
-    else:
-        # RFC 5545: an all-day event without DTEND lasts one day.
-        end_value = start_value + timedelta(days=1)
-
-    start_node = to_node(start_value, local_tz)
-    end_node = to_node(end_value, local_tz)
-    if start_node is None:
-        return None
-
-    uid = _text(component, "UID")
-    cancelled = _text(component, "STATUS").upper() == "CANCELLED"
-    return build_event(
-        uid=uid,
-        start_node=start_node,
-        end_node=end_node,
-        summary=_text(component, "SUMMARY"),
-        location=_text(component, "LOCATION"),
-        description=_text(component, "DESCRIPTION"),
-        status="cancelled" if cancelled else "",
-        conference_url=_text(component, "X-GOOGLE-CONFERENCE"),
-        partstat=_own_partstat(component, identity),
-        reminders=_popup_reminders(component),
-        html_link=google_event_url(uid, calendar_id),
-    )
-
-
 def _first_given(*choices):
     for choice in choices:
         if choice:
             return choice
     return ""
+
+
+def _report(calendar_id, answer):
+    if answer.get("left_out"):
+        print("skipping %d entries in %s: they cannot be read or repeat too often to expand" % (answer["left_out"], calendar_id))
+    if answer.get("unconvertible"):
+        print("skipping %d events in %s: they cannot be read" % (answer["unconvertible"], calendar_id))
 
 
 def _skip(label, reason, url):
@@ -217,13 +108,15 @@ class Ics:
     # Feeds are read only.
     can_write = False
 
-    def __init__(self, feeds, identity="", fetch=None, local_tz=None, lookup=keyring.lookup):
+    def __init__(self, feeds, identity="", fetch=None, local_tz=None, lookup=keyring.lookup, worker=run_worker, clock=time.monotonic):
         self._feeds, self._refused = parse_feeds(feeds, lookup)
         self._identity = identity
         self._fetch = fetch or download
         self._local_tz = local_tz if local_tz is not None else resolve_local_timezone()
-        # Feed id -> (parsed calendar, Google calendar id or blank).
-        self._parsed = {}
+        self._worker = worker
+        self._clock = clock
+        self._deadline = clock() + RUN_SECONDS
+        self._bodies = {}
 
     def version(self):
         icalendar, _rie = _load_libs()
@@ -248,17 +141,16 @@ class Ics:
             )
 
     def calendars(self):
-        icalendar, _rie = _load_libs()
         found = []
         failures = []
         for url in self._refused:
             failures.append(_skip(redact(url), unsafe_reason(url), url))
-        for position, feed in enumerate(self._feeds):
+        for feed in self._feeds:
             url = ""
             try:
+                self._require_time(DOWNLOAD_RESERVE_SECONDS)
                 url = feed.address()
                 body = self._fetch(url)
-                calendar = icalendar.Calendar.from_ical(body)
             except FeedProblem as problem:
                 failures.append(_skip(feed.label(), str(problem), url))
                 continue
@@ -267,44 +159,52 @@ class Ics:
                 continue
 
             ident = feed.ident()
-            self._parsed[ident] = (calendar, google_calendar_id(url))
+            self._bodies[ident] = (body, google_calendar_id(url))
+            header = feed_header(body)
             found.append(
                 {
                     "id": ident,
-                    "name": _first_given(feed.name, _text(calendar, "X-WR-CALNAME"), redact(url)),
-                    "color": _first_given(feed.color, _text(calendar, "X-APPLE-CALENDAR-COLOR")),
+                    "name": _first_given(feed.name, header["name"], redact(url)),
+                    "color": _first_given(feed.color, header["color"]),
                 }
             )
 
         if failures and not found:
-            # Every feed failed. Writing an empty file would wipe the panel.
             raise IcsError("; ".join(failures))
         return found
 
     def events(self, calendar_id, time_min, time_max):
-        icalendar, rie = _load_libs()
-        if calendar_id not in self._parsed:
+        if calendar_id not in self._bodies:
             raise IcsError("calendar %s was never fetched" % calendar_id)
-        calendar, google_id = self._parsed[calendar_id]
-
-        start = datetime.fromisoformat(time_min)
-        end = datetime.fromisoformat(time_max)
-        affordable, left_out = affordable_calendar(icalendar, calendar, end.date())
-        if left_out:
-            print("skipping %d repeating events in %s: they repeat too often to expand" % (left_out, calendar_id))
+        body, google_id = self._bodies.pop(calendar_id)
+        seconds = self._seconds_for_worker()
+        request = {
+            "body": base64.b64encode(body).decode("ascii"),
+            "start": time_min,
+            "end": time_max,
+            "zone": describe_zone(self._local_tz),
+            "identity": self._identity,
+            "google_id": google_id,
+            "seconds": seconds - WORKER_MARGIN_SECONDS,
+        }
         try:
-            occurrences = occurrences_in_window(rie, affordable, start, end)
-        except CalendarUnreadable:
-            raise
-        except Exception as error:
-            raise CalendarUnreadable("its events cannot be expanded (%s)" % type(error).__name__)
+            answer = self._worker(request, seconds)
+        except WorkerFailed as failed:
+            raise CalendarUnreadable(str(failed)) from None
+        if "problem" in answer:
+            raise CalendarUnreadable(str(answer["problem"]))
+        _report(calendar_id, answer)
+        return answer["events"]
 
-        events = []
-        for component in occurrences:
-            event = occurrence_to_event(component, self._local_tz, self._identity, google_id)
-            if event is not None:
-                events.append(event)
-        return events
+    def _seconds_for_worker(self):
+        left = self._deadline - self._clock()
+        if left < WORKER_MARGIN_SECONDS * 2:
+            raise CalendarUnreadable("no time was left in this run to read its events")
+        return min(WORKER_SECONDS + WORKER_MARGIN_SECONDS, int(left))
+
+    def _require_time(self, seconds):
+        if self._deadline - self._clock() < seconds:
+            raise FeedProblem("no time was left in this run to download it")
 
     def auth_hint(self, _cfg):
         return (

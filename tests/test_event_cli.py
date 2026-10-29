@@ -134,6 +134,15 @@ class TestPerform(unittest.TestCase):
         self.assertIn("new1", [r["id"] for r in self.events()])
         self.assertEqual((self.background, self.inline), ([1], []))
 
+    def test_a_spliced_file_that_breaks_the_contract_is_not_written(self):
+        client = FakeClient(reply=resource("new1"))
+        before = self.path.read_text()
+        with mock.patch.object(event_cli.contract, "MAX_DOCUMENT_BYTES", 10):
+            code, _ = self.run_event({"action": "create", "sendUpdates": "all", "event": form()}, client)
+        self.assertEqual(code, 0)
+        self.assertEqual(self.path.read_text(), before)
+        self.assertEqual(self.background, [1])
+
     def test_create_of_a_series_syncs_inline_instead_of_splicing(self):
         client = FakeClient(reply=dict(MASTER, id="new1"))
         code, _ = self.run_event({"action": "create", "event": form(repeat="weekly")}, client)

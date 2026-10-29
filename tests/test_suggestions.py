@@ -45,10 +45,6 @@ class TestGuestSuggestions(unittest.TestCase):
         self.assertEqual(suggestions.guest_suggestions([{"id": "e"}], exclude=[]), [])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestLengths(unittest.TestCase):
     def attendee_event(self, email, name):
         return {"attendees": [{"email": email, "displayName": name}]}
@@ -74,3 +70,7 @@ class TestSuggestionCeilings(unittest.TestCase):
     def test_more_suggestions_than_the_ceiling_are_a_problem(self):
         many = [{"email": "a@example.invalid"}] * (contract.MAX_GUEST_SUGGESTIONS + 1)
         self.assertEqual(len(contract.validate(self.document(many))), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

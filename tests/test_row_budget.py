@@ -32,5 +32,13 @@ class TestRowBudget(unittest.TestCase):
             self.assertTrue(budget.admit(rows(1)))
 
 
+class TestReserve(unittest.TestCase):
+    def test_room_is_kept_for_the_rest_of_the_file(self):
+        size = contract.written_size(rows(1))
+        budget = row_budget.RowBudget()
+        with mock.patch.object(contract, "MAX_DOCUMENT_BYTES", size + row_budget.RESERVED_BYTES - 1):
+            self.assertFalse(budget.admit(rows(1)))
+
+
 if __name__ == "__main__":
     unittest.main()

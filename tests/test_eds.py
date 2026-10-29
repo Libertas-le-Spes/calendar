@@ -80,10 +80,6 @@ class TestWriteSupport(unittest.TestCase):
         self.assertFalse(eds.Eds.can_write)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ManyInstances:
     def __init__(self, available):
         self.available = available
@@ -101,8 +97,12 @@ class TestEventsLimit(unittest.TestCase):
         client = ManyInstances(1000)
         source = eds.Eds()
         source._clients["made-up"] = client
-        with mock.patch.object(eds.Eds, "_bindings", return_value=(None, None, None)), \
+        with mock.patch.object(eds.Eds, "_bindings", autospec=True, return_value=(None, None, None)), \
                 mock.patch.object(eds, "EVENTS_PER_CALENDAR", 3):
             with self.assertRaises(TooManyEvents):
                 source.events("made-up", "2026-10-01T00:00:00+00:00", "2026-10-31T00:00:00+00:00")
         self.assertEqual(client.handed_out, 4)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -453,7 +453,7 @@ function visibleEvents(events, hidden, options) {
 
 // Only https is ever launched. A meeting link is supplied by whoever sent the
 // invitation, so treating it as trusted input would be a mistake.
-var SAFE_URL = /^https:\/\/[^\s"'<>\\@\/?#\x00-\x1f\x7f]+(?:[\/?#][^\s"'<>\\\x00-\x1f\x7f]*)?$/
+var SAFE_URL = /^https:\/\/[^\s"'<>\\@\/?#\x00-\x1f\x7f\x85\ufeff]+(?:[\/?#][^\s"'<>\\\x00-\x1f\x7f\x85\ufeff]*)?$/
 
 function safeUrl(url) {
   var candidate = text(url).trim()
@@ -480,13 +480,27 @@ var MEETING_HOSTS = [
   { pattern: /(^|\.)whereby\.com$/, name: "Whereby" }
 ]
 
-function meetingHost(url) {
+var LONGEST_SHOWN_HOST = 40
+
+function hostOf(url) {
   var match = safeUrl(url).match(/^https:\/\/([^\/?#:]+)/)
   if (!match) return ""
-  var host = match[1].toLowerCase()
+  return match[1].toLowerCase()
+}
+
+function meetingService(url) {
+  var host = hostOf(url)
   for (var i = 0; i < MEETING_HOSTS.length; i++)
     if (MEETING_HOSTS[i].pattern.test(host)) return MEETING_HOSTS[i].name
+  return ""
+}
+
+function meetingHost(url) {
+  var service = meetingService(url)
+  if (service) return service
+  var host = hostOf(url)
   if (!/^[a-z0-9.-]+$/.test(host)) return ""
+  if (host.length > LONGEST_SHOWN_HOST) return ""
   return host
 }
 
@@ -1086,9 +1100,21 @@ function reminderBody(event, nowMs, lang, formatTime, formatWeekday) {
   if (range.end > range.start) times += "–" + formatTime(range.end)
   parts.push(times)
 
-  var where = meetingHost(meetingUrlFor(event)) || truncateTitle(text(event.location).trim(), 48)
+  var where = reminderPlace(event)
   if (where) parts.push(where)
   return escapedMarkup(parts.join(" · "))
+}
+
+function reminderPlace(event) {
+  var url = meetingUrlFor(event)
+  var service = meetingService(url)
+  if (service) return service
+  var location = truncateTitle(text(event.location).trim(), 48)
+  var host = meetingHost(url)
+  if (!url) return location
+  if (!host) return location
+  if (!location) return host
+  return location + " · " + host
 }
 
 function escapedMarkup(value) {

@@ -177,9 +177,6 @@ class TestGwsPath(unittest.TestCase):
             self.assertEqual(config.load(path)["gwsPath"], "/opt/bin/gws")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 FEEDS = json.dumps({"backend": "ics", "ics": ["https://feeds.example.invalid/private-made-up.ics"]})
 KEYRING_FEEDS = json.dumps({"backend": "ics", "ics": [{"secret": "ics-0123456789ab"}]})
@@ -193,17 +190,20 @@ class TestConfigPermissions(unittest.TestCase):
         with self.assertRaises(config.ConfigError) as raised:
             load_text("{}", file_status=status(stat.S_IFREG | 0o600, owner=os.getuid() + 1))
         self.assertIn("another user", str(raised.exception))
+        self.assertNotIn("chmod", str(raised.exception))
 
     def test_a_config_others_can_change_is_refused_even_without_secrets(self):
         for mode in (0o620, 0o602):
             with self.subTest(mode=oct(mode)):
-                with self.assertRaises(config.ConfigError):
+                with self.assertRaises(config.ConfigError) as raised:
                     load_text("{}", file_status=status(stat.S_IFREG | mode))
+                self.assertIn("chmod 600", str(raised.exception))
 
     def test_a_config_in_a_folder_others_can_change_is_refused(self):
         with self.assertRaises(config.ConfigError) as raised:
             load_text("{}", folder_status=status(stat.S_IFDIR | 0o777))
         self.assertIn("folder", str(raised.exception))
+        self.assertIn("chmod go-w", str(raised.exception))
 
     def test_feed_addresses_others_can_read_are_refused(self):
         for mode in (0o640, 0o604):
@@ -217,3 +217,7 @@ class TestConfigPermissions(unittest.TestCase):
 
     def test_feeds_kept_in_the_keyring_may_sit_in_a_readable_config(self):
         self.assertEqual(load_text(KEYRING_FEEDS, file_status=status(stat.S_IFREG | 0o644))["backend"], "ics")
+
+
+if __name__ == "__main__":
+    unittest.main()

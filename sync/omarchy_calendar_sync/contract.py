@@ -70,8 +70,8 @@ _COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 # match Model.safeUrl exactly: when the widget is stricter than the sync, a
 # URL is written, then silently refused, and there is no button and no error.
 _HTTPS_URL = re.compile(
-    r"^https://[^\s\"'<>\\@/?#\x00-\x1f\x7f]+"
-    r"(?:[/?#][^\s\"'<>\\\x00-\x1f\x7f]*)?$"
+    r"https://[^\s\"'<>\\@/?#\x00-\x1f\x7f\x85\ufeff]+"
+    r"(?:[/?#][^\s\"'<>\\\x00-\x1f\x7f\x85\ufeff]*)?"
 )
 
 
@@ -82,7 +82,7 @@ def is_color(text):
 
 def is_https_url(text):
     """True when `text` is a URL the widget will agree to launch."""
-    return isinstance(text, str) and bool(_HTTPS_URL.match(text))
+    return isinstance(text, str) and bool(_HTTPS_URL.fullmatch(text))
 
 
 def build_document(events, synced_at, source, writable_calendars=None, guest_suggestions=None):
@@ -144,9 +144,18 @@ def event_problems(event):
     return _validate_event(0, event)
 
 
+def serialized(value):
+    return json.dumps(value, ensure_ascii=False, indent=2) + "\n"
+
+
+def written_size(rows):
+    """The bytes `rows` take in the written file."""
+    return len(serialized({"events": rows}).encode("utf-8"))
+
+
 def checked(doc):
     """The document as the text to write, and every reason not to write it."""
-    text = json.dumps(doc, ensure_ascii=False, indent=2) + "\n"
+    text = serialized(doc)
     problems = validate(doc)
     size = size_problem(text)
     if size:

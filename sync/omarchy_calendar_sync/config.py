@@ -64,9 +64,9 @@ def load(path=None):
     if not isinstance(raw, dict):
         raise ConfigError(f"{path} must contain a JSON object")
 
-    problem = permission_problem(file_status, folder_status, holds_plain_feed_addresses(raw), os.getuid())
+    problem = permission_problem(path, file_status, folder_status, holds_plain_feed_addresses(raw), os.getuid())
     if problem:
-        raise ConfigError(f"{path} {problem}; run: chmod 600 {path}")
+        raise ConfigError(f"{path} {problem}")
 
     merged = _merge(copy.deepcopy(DEFAULTS), raw)
 
@@ -82,21 +82,22 @@ def load(path=None):
     return merged
 
 
-def permission_problem(file_status, folder_status, holds_secrets, user_id):
-    """Why the config cannot be trusted as it is stored, or blank.
+def permission_problem(path, file_status, folder_status, holds_secrets, user_id):
+    """Why the config cannot be trusted as it is stored, and how to fix it, or blank.
 
     It names a program the timer runs, so nobody else may own or change it,
     or replace it through its folder; and while it holds a feed address,
     which is a password, nobody else may read it either.
     """
     if file_status.st_uid != user_id:
-        return "belongs to another user"
+        return "belongs to another user; remove it and run sync/setup again as yourself"
     if file_status.st_mode & OTHERS_WRITE:
-        return "can be changed by other users"
+        return f"can be changed by other users; run: chmod 600 {path}"
     if folder_status.st_mode & OTHERS_WRITE:
-        return "is in a folder other users can change"
+        return f"is in a folder other users can change; run: chmod go-w {path.parent}"
     if holds_secrets and file_status.st_mode & OTHERS_READ:
-        return "holds feed addresses that other users can read"
+        return (f"holds feed addresses that other users can read; run: chmod 600 {path}, "
+                "or sync/setup --ics to move them into the keyring")
     return ""
 
 
