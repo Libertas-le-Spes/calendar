@@ -211,9 +211,45 @@ test('reminderBody: an all-day event is its day', () => {
   assert.equal(Model.reminderBody(holiday, localMs(2026, 9, 6, 15, 0), 'pt', clock, weekday), 'Amanhã · dia todo')
 })
 
+test('reminderBody: tags in a location show as typed rather than as formatting', () => {
+  const styled = event({ location: '<font color="#ff0000">Moved: see email</font>' })
+  assert.equal(Model.reminderBody(styled, START - 10 * MIN, 'en', clock, weekday),
+    '13:00–13:45 · &lt;font color="#ff0000"&gt;Moved: see email&lt;/font&gt;')
+})
+
+test('reminderBody: an ampersand is escaped before the tags it could otherwise forge', () => {
+  const room = event({ location: 'Room &lt;3&gt;' })
+  assert.equal(Model.reminderBody(room, START - 10 * MIN, 'en', clock, weekday), '13:00–13:45 · Room &amp;lt;3&amp;gt;')
+})
+
 test('notificationArg keeps option-looking text as text', () => {
   assert.equal(Model.notificationArg('-g evil'), '⁠-g evil')
   assert.equal(Model.notificationArg('--exec'), '⁠--exec')
   assert.equal(Model.notificationArg('Standup in 5 min'), 'Standup in 5 min')
   assert.equal(Model.notificationArg(''), '')
+})
+
+test('reminderBody: the room and the host a link to an unknown service opens are both named', () => {
+  const event_ = event({ meetingUrl: 'https://intranet.example.invalid/room', location: 'Room 4' })
+  assert.equal(Model.reminderBody(event_, START - 10 * MIN, 'en', clock, weekday), '13:00–13:45 · Room 4 · intranet.example.invalid')
+})
+
+test('reminderBody: a location that names a service cannot hide where the click goes', () => {
+  const event_ = event({ meetingUrl: 'https://login-check.example.invalid/j/1', location: 'zoom.us/j/81234567890' })
+  assert.ok(Model.reminderBody(event_, START - 10 * MIN, 'en', clock, weekday).endsWith('login-check.example.invalid'))
+})
+
+test('reminderBody: with no link, the room alone is named', () => {
+  const event_ = event({ location: 'Room 4' })
+  assert.equal(Model.reminderBody(event_, START - 10 * MIN, 'en', clock, weekday), '13:00–13:45 · Room 4')
+})
+
+test('reminderBody: a known service wins over the room', () => {
+  const event_ = event({ meetingUrl: 'https://meet.google.com/abc-defg-hij', location: 'Room 4' })
+  assert.equal(Model.reminderBody(event_, START - 10 * MIN, 'en', clock, weekday), '13:00–13:45 · Google Meet')
+})
+
+test('reminderBody: with no room, the host of the link is named', () => {
+  const event_ = event({ meetingUrl: 'https://intranet.example.invalid/room' })
+  assert.equal(Model.reminderBody(event_, START - 10 * MIN, 'en', clock, weekday), '13:00–13:45 · intranet.example.invalid')
 })

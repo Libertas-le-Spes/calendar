@@ -77,6 +77,7 @@ Rectangle {
       spacing: Style.space(1)
 
       Text {
+        textFormat: Text.PlainText
         text: root.clock(root.item.startMs)
         color: root.phase === "now" && !root.declined ? Color.accent : root.foreground
         font.family: root.fontFamily
@@ -85,6 +86,7 @@ Rectangle {
       }
 
       Text {
+        textFormat: Text.PlainText
         text: root.clock(root.item.endMs)
         color: Util.alpha(root.foreground, 0.5)
         font.family: root.fontFamily

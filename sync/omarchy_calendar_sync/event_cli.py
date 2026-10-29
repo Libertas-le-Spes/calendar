@@ -45,7 +45,7 @@ def start_background_sync():
     )
 
 
-def perform(raw, cfg, client, doc_path, tz, start_sync=start_background_sync, sync_now=None):
+def perform(raw, cfg, client, doc_path, tz, window, start_sync=start_background_sync, sync_now=None):
     """Run one request. Returns (exit code, reply).
 
     start_sync starts a sync in the background. sync_now runs one inline,
@@ -85,9 +85,10 @@ def perform(raw, cfg, client, doc_path, tz, start_sync=start_background_sync, sy
         return 0, {"ok": True, "eventId": event_id}
 
     try:
-        spliced = writes.splice(doc, calendar, event_id, resource, tz)
-        if not contract.validate(spliced):
-            cli.write_atomic(Path(doc_path), spliced)
+        spliced = writes.splice(doc, calendar, event_id, resource, tz, window)
+        text, problems = contract.checked(spliced)
+        if not problems:
+            cli.write_atomic(Path(doc_path), text)
     except (KeyError, TypeError, ValueError, OSError):
         # Google has the change. The background sync below writes the file.
         pass
@@ -209,8 +210,9 @@ def main(argv=None, stdin=None):
     except config_module.ConfigError as error:
         return _emit(1, _fail(f"Config error: {error}"))
 
+    window = config_module.local_days_in_window(cfg, datetime.now(timezone.utc), tz)
     code, reply = perform(
-        raw, cfg, client, contract.CONTRACT_PATH, tz,
+        raw, cfg, client, contract.CONTRACT_PATH, tz, window,
         sync_now=lambda: _sync_inline(client, cfg, tz),
     )
     return _emit(code, reply)

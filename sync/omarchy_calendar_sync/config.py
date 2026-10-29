@@ -6,10 +6,18 @@ with no file at all.
 
 import copy
 import json
-from datetime import timedelta
+import os
+import stat
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import NamedTuple
+
+from .feeds import entry_text, feed_entries
 
 CONFIG_PATH = Path.home() / ".config" / "omarchy" / "calendar-sync.json"
+OTHERS_WRITE = stat.S_IWGRP | stat.S_IWOTH
+OTHERS_READ = stat.S_IRGRP | stat.S_IROTH
+MAX_WINDOW_DAYS = 366
 
 DEFAULTS = {
     # "gws" reads Google directly and needs a Google Cloud project;
@@ -48,11 +56,17 @@ def load(path=None):
 
     try:
         raw = json.loads(path.read_text())
+        file_status = path.stat()
+        folder_status = path.parent.stat()
     except (OSError, json.JSONDecodeError) as error:
         raise ConfigError(f"cannot read {path}: {error}") from error
 
     if not isinstance(raw, dict):
         raise ConfigError(f"{path} must contain a JSON object")
+
+    problem = permission_problem(path, file_status, folder_status, holds_plain_feed_addresses(raw), os.getuid())
+    if problem:
+        raise ConfigError(f"{path} {problem}")
 
     merged = _merge(copy.deepcopy(DEFAULTS), raw)
 
@@ -66,6 +80,32 @@ def load(path=None):
         )
 
     return merged
+
+
+def permission_problem(path, file_status, folder_status, holds_secrets, user_id):
+    """Why the config cannot be trusted as it is stored, and how to fix it, or blank.
+
+    It names a program the timer runs, so nobody else may own or change it,
+    or replace it through its folder; and while it holds a feed address,
+    which is a password, nobody else may read it either.
+    """
+    if file_status.st_uid != user_id:
+        return "belongs to another user; remove it and run sync/setup again as yourself"
+    if file_status.st_mode & OTHERS_WRITE:
+        return f"can be changed by other users; run: chmod 600 {path}"
+    if folder_status.st_mode & OTHERS_WRITE:
+        return f"is in a folder other users can change; run: chmod go-w {path.parent}"
+    if holds_secrets and file_status.st_mode & OTHERS_READ:
+        return (f"holds feed addresses that other users can read; run: chmod 600 {path}, "
+                "or sync/setup --ics to move them into the keyring")
+    return ""
+
+
+def holds_plain_feed_addresses(raw):
+    for entry in feed_entries(raw.get("ics")):
+        if entry_text(entry, "url"):
+            return True
+    return False
 
 
 def _merge(defaults, override):
@@ -95,6 +135,13 @@ def _validate_calendars(calendars):
 
 def _coerce_days(value, key):
     """Turn a window day count into an int, or fail loudly naming the key."""
+    days = _as_whole_number(value, key)
+    if days < 0:
+        raise ConfigError(f"{key} must not be negative")
+    return min(days, MAX_WINDOW_DAYS)
+
+
+def _as_whole_number(value, key):
     if isinstance(value, bool):
         raise ConfigError(f"{key} must be a number")
     if isinstance(value, (int, float)):
@@ -122,6 +169,18 @@ def select_calendars(calendars, config):
             continue
         selected.append(calendar)
     return selected
+
+
+class DayWindow(NamedTuple):
+    first: date
+    last: date
+
+
+def local_days_in_window(config, now, local_tz):
+    time_min, time_max = window_bounds(config, now)
+    first = datetime.fromisoformat(time_min).astimezone(local_tz).date()
+    last = datetime.fromisoformat(time_max).astimezone(local_tz).date()
+    return DayWindow(first, last)
 
 
 def window_bounds(config, now):

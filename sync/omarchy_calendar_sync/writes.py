@@ -59,7 +59,7 @@ def parse_request(raw, writable_ids):
     return request
 
 
-def splice(doc, calendar, event_id, resource, tz):
+def splice(doc, calendar, event_id, resource, tz, window):
     """Replace one event's rows in the document.
 
     `resource` is Google's reply to a create or an update, or None for a
@@ -71,6 +71,6 @@ def splice(doc, calendar, event_id, resource, tz):
         if not (row.get("calendarId") == calendar["id"] and row.get("id") == event_id)
     ]
     if resource is not None:
-        kept.extend(normalize.normalize_event(resource, calendar, tz))
+        kept.extend(normalize.normalize_event(resource, calendar, tz, window))
     kept.sort(key=normalize.row_order)
     return {**doc, "events": kept}

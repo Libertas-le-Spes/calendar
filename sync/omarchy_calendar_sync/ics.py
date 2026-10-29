@@ -18,22 +18,21 @@ on a machine without python-icalendar and python-recurring-ical-events.
 """
 
 import base64
-import hashlib
 import re
-import urllib.error
+import time
 import urllib.parse
-import urllib.request
-from datetime import date, datetime, timedelta
 
-from .errors import SyncError
+from . import keyring
+from .errors import CalendarUnreadable, FeedProblem, SyncError
+from .feed_download import download
+from .feed_header import feed_header
+from .feed_request import describe_zone
+from .feeds import feed_url, parse_feeds, redact, scrubbed, unsafe_reason
+from .limits import DOWNLOAD_RESERVE_SECONDS, RUN_SECONDS, WORKER_MARGIN_SECONDS, WORKER_SECONDS
 from .localzone import resolve_local_timezone
-from .resources import build_event
+from .worker_process import WorkerFailed, run_worker
 
-FETCH_TIMEOUT = 30
-# A feed carries no colour of its own, so each one takes the next of
-# Google's calendar colours, keeping two feeds apart on the grid.
-FEED_COLORS = ("#4285f4", "#f6bf26", "#33b679", "#e67c73", "#8e24aa", "#f4511e", "#039be5", "#7986cb")
-USER_AGENT = "omarchy-calendar-sync"
+MINIMUM_ICALENDAR = (7, 2, 2)
 
 
 class IcsError(SyncError):
@@ -57,54 +56,8 @@ def _load_libs():
         ) from error
 
 
-def feed_url(value):
-    """The fetchable URL for a configured feed. webcal:// is https://."""
-    text = str(value or "").strip()
-    if text.startswith("webcal://"):
-        text = "https://" + text[len("webcal://"):]
-    return text
-
-
-def redact(url):
-    """A URL safe to log. The path of a private feed is the credential."""
-    text = feed_url(url)
-    scheme, _, rest = text.partition("://")
-    host = rest.split("/", 1)[0]
-    return "%s://%s/..." % (scheme, host) if host else "(no url)"
-
-
-def feed_id(url):
-    """A stable calendar id that does not leak the secret URL into the file."""
-    return "ics-" + hashlib.sha256(feed_url(url).encode()).hexdigest()[:12]
-
-
-SECRET_HINT = (
-    "use \"Secret address in iCal format\" under Settings > the calendar > "
-    "Integrate calendar; it looks like .../ical/<id>/private-<code>/basic.ics"
-)
-
-
-def url_problem(value):
-    """Why a URL is not a usable feed, or blank when it looks fine.
-
-    Google shows the public address and the embed link right beside the
-    secret one, and both are easy to copy by mistake.
-    """
-    url = feed_url(value)
-    if not url.startswith(("https://", "http://")):
-        return "expected an https:// or webcal:// address"
-    if "calendar.google.com" in url:
-        if "/embed" in url:
-            return "that is the embed link, a web page rather than a feed; " + SECRET_HINT
-        if "/public/" in url:
-            return ("that is the public address, which only works for a "
-                    "calendar shared publicly; " + SECRET_HINT)
-    return ""
-
-
 _GOOGLE_HOSTS = ("calendar.google.com", "www.google.com")
 _GOOGLE_FEED_PATH = re.compile(r"^/calendar/ical/([^/]+)/(?:private-[^/]+|public)/basic\.ics$")
-_GOOGLE_UID_SUFFIX = "@google.com"
 
 
 def google_calendar_id(url):
@@ -116,154 +69,31 @@ def google_calendar_id(url):
     return urllib.parse.unquote(match.group(1))
 
 
-def google_event_url(uid, calendar_id):
-    """Google Calendar's page for an event, or blank when it cannot be built.
-
-    The feed carries no link, but Google's own link is the event id and the
-    calendar id, space separated, in unpadded base64url. The id is the UID
-    minus "@google.com"; an event imported from elsewhere keeps a foreign UID
-    and an id the feed never reveals. A recurring event's UID names the
-    series, so every occurrence opens the series.
-    """
-    if not calendar_id or not uid.endswith(_GOOGLE_UID_SUFFIX):
-        return ""
-    event_id = uid[: -len(_GOOGLE_UID_SUFFIX)]
-    eid = base64.urlsafe_b64encode(("%s %s" % (event_id, calendar_id)).encode())
-    return "https://calendar.google.com/calendar/event?eid=" + eid.decode().rstrip("=")
-
-
-def parse_feeds(raw):
-    """Normalize the `ics` config value into a list of {url, name, color}.
-
-    Accepts a single URL string, a list of URL strings, or a list of objects
-    with `url` and optional `name` and `color`.
-    """
-    if isinstance(raw, (str, dict)):
-        raw = [raw]
-    feeds = []
-    for entry in raw or []:
-        if isinstance(entry, str):
-            entry = {"url": entry}
-        if not isinstance(entry, dict):
-            continue
-        url = feed_url(entry.get("url"))
-        if not url:
-            continue
-        feeds.append(
-            {
-                "url": url,
-                "name": str(entry.get("name") or "").strip(),
-                "color": str(entry.get("color") or "").strip(),
-            }
-        )
-    return feeds
-
-
-def _http_get(url):
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(request, timeout=FETCH_TIMEOUT) as response:
-        return response.read()
-
-
-def to_node(value, local_tz):
-    """A date or datetime from icalendar as a Google start/end node.
-
-    A floating time (no TZID, no Z) means "local time wherever you are" in
-    iCalendar, so it is pinned to the local zone rather than refused.
-    """
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=local_tz)
-        return {"dateTime": value.isoformat()}
-    if isinstance(value, date):
-        return {"date": value.isoformat()}
-    return None
-
-
-def _text(component, name):
-    value = component.get(name)
-    return str(value) if value is not None else ""
-
-
-def _own_partstat(component, identity):
-    """The PARTSTAT of the attendee matching `identity`, or blank."""
-    if not identity:
-        return ""
-    wanted = "mailto:%s" % identity.strip().lower()
-    attendees = component.get("ATTENDEE")
-    if attendees is None:
-        return ""
-    if not isinstance(attendees, list):
-        attendees = [attendees]
-    for attendee in attendees:
-        if str(attendee).strip().lower() == wanted:
-            return str(getattr(attendee, "params", {}).get("PARTSTAT", ""))
+def _first_given(*choices):
+    for choice in choices:
+        if choice:
+            return choice
     return ""
 
 
-def _popup_reminders(component):
-    """Minutes before the start of the VALARMs that show or sound something.
-
-    Alarms tied to the end or to an absolute time are left out: the contract
-    counts back from the start. EMAIL alarms are not the widget's to raise.
-    """
-    minutes = set()
-    for alarm in component.walk("VALARM"):
-        if str(alarm.get("ACTION") or "").upper() not in ("DISPLAY", "AUDIO"):
-            continue
-        # getattr: a malformed TRIGGER must cost one alarm, not the whole sync.
-        trigger = alarm.get("TRIGGER")
-        related = getattr(trigger, "params", {}).get("RELATED", "START")
-        if str(related).upper() != "START":
-            continue
-        offset = getattr(trigger, "dt", None)
-        if isinstance(offset, timedelta) and offset <= timedelta(0):
-            minutes.add(int(-offset.total_seconds()) // 60)
-    return sorted(minutes)
+def _report(calendar_id, answer):
+    if answer.get("left_out"):
+        print("skipping %d entries in %s: they cannot be read or repeat too often to expand" % (answer["left_out"], calendar_id))
+    if answer.get("unconvertible"):
+        print("skipping %d events in %s: they cannot be read" % (answer["unconvertible"], calendar_id))
 
 
-def occurrence_to_event(component, local_tz, identity="", calendar_id=""):
-    """One expanded VEVENT occurrence as a Google event resource.
+def _skip(label, reason, url):
+    failure = scrubbed("%s: %s" % (label, reason), url)
+    print("skipping " + failure)
+    return failure
 
-    `calendar_id` is the Google calendar the feed belongs to, blank for a
-    feed from anywhere else.
-    """
-    start = component.get("DTSTART")
-    if start is None:
-        return None
-    start_value = start.dt
 
-    end_value = None
-    if component.get("DTEND") is not None:
-        end_value = component["DTEND"].dt
-    elif component.get("DURATION") is not None:
-        end_value = start_value + component["DURATION"].dt
-    elif isinstance(start_value, datetime):
-        end_value = start_value
-    else:
-        # RFC 5545: an all-day event without DTEND lasts one day.
-        end_value = start_value + timedelta(days=1)
-
-    start_node = to_node(start_value, local_tz)
-    end_node = to_node(end_value, local_tz)
-    if start_node is None:
-        return None
-
-    uid = _text(component, "UID")
-    cancelled = _text(component, "STATUS").upper() == "CANCELLED"
-    return build_event(
-        uid=uid,
-        start_node=start_node,
-        end_node=end_node,
-        summary=_text(component, "SUMMARY"),
-        location=_text(component, "LOCATION"),
-        description=_text(component, "DESCRIPTION"),
-        status="cancelled" if cancelled else "",
-        conference_url=_text(component, "X-GOOGLE-CONFERENCE"),
-        partstat=_own_partstat(component, identity),
-        reminders=_popup_reminders(component),
-        html_link=google_event_url(uid, calendar_id),
-    )
+def _dotted(version):
+    parts = []
+    for part in version:
+        parts.append(str(part))
+    return ".".join(parts)
 
 
 class Ics:
@@ -278,13 +108,15 @@ class Ics:
     # Feeds are read only.
     can_write = False
 
-    def __init__(self, feeds, identity="", fetch=None, local_tz=None):
-        self._feeds = parse_feeds(feeds)
+    def __init__(self, feeds, identity="", fetch=None, local_tz=None, lookup=keyring.lookup, worker=run_worker, clock=time.monotonic):
+        self._feeds, self._refused = parse_feeds(feeds, lookup)
         self._identity = identity
-        self._fetch = fetch or _http_get
+        self._fetch = fetch or download
         self._local_tz = local_tz if local_tz is not None else resolve_local_timezone()
-        # Feed id -> (parsed calendar, Google calendar id or blank).
-        self._parsed = {}
+        self._worker = worker
+        self._clock = clock
+        self._deadline = clock() + RUN_SECONDS
+        self._bodies = {}
 
     def version(self):
         icalendar, _rie = _load_libs()
@@ -296,67 +128,83 @@ class Ics:
 
     def check(self):
         _load_libs()
-        if not self._feeds:
+        found = self.version()
+        if found < MINIMUM_ICALENDAR:
+            raise IcsMissing(
+                "python-icalendar %s or newer is required, found %s; update the system packages"
+                % (_dotted(MINIMUM_ICALENDAR), _dotted(found))
+            )
+        if not self._feeds and not self._refused:
             raise IcsError(
                 "no feeds configured; add your calendar's secret iCal address "
                 "under \"ics\" in ~/.config/omarchy/calendar-sync.json"
             )
 
     def calendars(self):
-        icalendar, _rie = _load_libs()
         found = []
         failures = []
-        for position, feed in enumerate(self._feeds):
-            url = feed["url"]
+        for url in self._refused:
+            failures.append(_skip(redact(url), unsafe_reason(url), url))
+        for feed in self._feeds:
+            url = ""
             try:
+                self._require_time(DOWNLOAD_RESERVE_SECONDS)
+                url = feed.address()
                 body = self._fetch(url)
-                calendar = icalendar.Calendar.from_ical(body)
-            except (urllib.error.URLError, OSError, ValueError) as error:
-                # One broken feed must not sink the others.
-                problem = url_problem(url)
-                reason = "%s (%s)" % (error, problem) if problem else str(error)
-                failures.append("%s: %s" % (redact(url), reason))
-                print("skipping %s: %s" % (redact(url), reason))
+            except FeedProblem as problem:
+                failures.append(_skip(feed.label(), str(problem), url))
+                continue
+            except Exception as error:
+                failures.append(_skip(feed.label(), "%s while reading the feed" % type(error).__name__, url))
                 continue
 
-            ident = feed_id(url)
-            self._parsed[ident] = (calendar, google_calendar_id(url))
+            ident = feed.ident()
+            self._bodies[ident] = (body, google_calendar_id(url))
+            header = feed_header(body)
             found.append(
                 {
                     "id": ident,
-                    "name": feed["name"]
-                    or _text(calendar, "X-WR-CALNAME")
-                    or redact(url),
-                    "color": feed["color"]
-                    or _text(calendar, "X-APPLE-CALENDAR-COLOR")
-                    or FEED_COLORS[position % len(FEED_COLORS)],
+                    "name": _first_given(feed.name, header["name"], redact(url)),
+                    "color": _first_given(feed.color, header["color"]),
                 }
             )
 
         if failures and not found:
-            # Every feed failed. Writing an empty file would wipe the panel.
             raise IcsError("; ".join(failures))
         return found
 
     def events(self, calendar_id, time_min, time_max):
-        _icalendar, rie = _load_libs()
-        if calendar_id not in self._parsed:
+        if calendar_id not in self._bodies:
             raise IcsError("calendar %s was never fetched" % calendar_id)
-        calendar, google_id = self._parsed[calendar_id]
-
-        start = datetime.fromisoformat(time_min)
-        end = datetime.fromisoformat(time_max)
+        body, google_id = self._bodies.pop(calendar_id)
+        seconds = self._seconds_for_worker()
+        request = {
+            "body": base64.b64encode(body).decode("ascii"),
+            "start": time_min,
+            "end": time_max,
+            "zone": describe_zone(self._local_tz),
+            "identity": self._identity,
+            "google_id": google_id,
+            "seconds": seconds - WORKER_MARGIN_SECONDS,
+        }
         try:
-            occurrences = rie.of(calendar).between(start, end)
-        except Exception as error:
-            raise IcsError("cannot expand %s: %s" % (calendar_id, error))
+            answer = self._worker(request, seconds)
+        except WorkerFailed as failed:
+            raise CalendarUnreadable(str(failed)) from None
+        if "problem" in answer:
+            raise CalendarUnreadable(str(answer["problem"]))
+        _report(calendar_id, answer)
+        return answer["events"]
 
-        events = []
-        for component in occurrences:
-            event = occurrence_to_event(component, self._local_tz, self._identity, google_id)
-            if event is not None:
-                events.append(event)
-        return events
+    def _seconds_for_worker(self):
+        left = self._deadline - self._clock()
+        if left < WORKER_MARGIN_SECONDS * 2:
+            raise CalendarUnreadable("no time was left in this run to read its events")
+        return min(WORKER_SECONDS + WORKER_MARGIN_SECONDS, int(left))
+
+    def _require_time(self, seconds):
+        if self._deadline - self._clock() < seconds:
+            raise FeedProblem("no time was left in this run to download it")
 
     def auth_hint(self, _cfg):
         return (

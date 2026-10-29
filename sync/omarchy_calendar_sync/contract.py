@@ -5,8 +5,11 @@ This module is the single source of truth for the shape of
 import it, so the schema can never drift between them.
 """
 
+import json
 import re
 from pathlib import Path
+
+from .plaintext import DESCRIPTION_LIMIT
 
 CONTRACT_VERSION = 1
 CONTRACT_PATH = Path.home() / ".local" / "state" / "omarchy" / "calendar-events.json"
@@ -38,6 +41,27 @@ OPTIONAL_EVENT_FIELDS = (
 )
 _OPTIONAL_STRING_FIELDS = tuple(f for f in OPTIONAL_EVENT_FIELDS if f != "reminders")
 
+MAX_EVENT_ROWS = 8000
+MAX_DOCUMENT_BYTES = 16 * 1024 * 1024
+
+FIELD_LENGTHS = {
+    "id": 1024,
+    "calendarId": 1024,
+    "calendarName": 200,
+    "start": 64,
+    "end": 64,
+    "title": 500,
+    "location": 500,
+    "meetingUrl": 2048,
+    "eventUrl": 2048,
+    "eventType": 64,
+    "responseStatus": 64,
+    "description": DESCRIPTION_LIMIT,
+}
+
+MAX_GUEST_SUGGESTIONS = 200
+SUGGESTION_LENGTHS = {"email": 254, "name": 100}
+
 _DATE_KEY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -45,12 +69,20 @@ _COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 # widget must never be handed a scheme it would be unwise to launch. Must
 # match Model.safeUrl exactly: when the widget is stricter than the sync, a
 # URL is written, then silently refused, and there is no button and no error.
-_HTTPS_URL = re.compile(r"^https://[^\s\"'<>]+$")
+_HTTPS_URL = re.compile(
+    r"https://[^\s\"'<>\\@/?#\x00-\x1f\x7f\x85\ufeff]+"
+    r"(?:[/?#][^\s\"'<>\\\x00-\x1f\x7f\x85\ufeff]*)?"
+)
+
+
+def is_color(text):
+    """True when `text` is a colour the contract accepts."""
+    return isinstance(text, str) and bool(_COLOR.match(text))
 
 
 def is_https_url(text):
     """True when `text` is a URL the widget will agree to launch."""
-    return isinstance(text, str) and bool(_HTTPS_URL.match(text))
+    return isinstance(text, str) and bool(_HTTPS_URL.fullmatch(text))
 
 
 def build_document(events, synced_at, source, writable_calendars=None, guest_suggestions=None):
@@ -92,6 +124,9 @@ def validate(doc):
     if not isinstance(events, list):
         problems.append("events must be a list")
         return problems
+    if len(events) > MAX_EVENT_ROWS:
+        problems.append(f"events holds {len(events)} rows, more than {MAX_EVENT_ROWS}")
+        return problems
 
     if "writableCalendars" in doc:
         problems.extend(_validate_writable(doc["writableCalendars"]))
@@ -104,9 +139,43 @@ def validate(doc):
     return problems
 
 
+def event_problems(event):
+    """Why one row breaks the contract, or an empty list when it is sound."""
+    return _validate_event(0, event)
+
+
+def serialized(value):
+    return json.dumps(value, ensure_ascii=False, indent=2) + "\n"
+
+
+def written_size(rows):
+    """The bytes `rows` take in the written file."""
+    return len(serialized({"events": rows}).encode("utf-8"))
+
+
+def checked(doc):
+    """The document as the text to write, and every reason not to write it."""
+    text = serialized(doc)
+    problems = validate(doc)
+    size = size_problem(text)
+    if size:
+        problems.append(size)
+    return text, problems
+
+
+def size_problem(text):
+    """Why a serialized document is too large for the widget, or blank."""
+    size = len(text.encode("utf-8"))
+    if size > MAX_DOCUMENT_BYTES:
+        return f"the document is {size} bytes, more than {MAX_DOCUMENT_BYTES}"
+    return ""
+
+
 def _validate_suggestions(suggestions):
     if not isinstance(suggestions, list):
         return ["guestSuggestions must be a list"]
+    if len(suggestions) > MAX_GUEST_SUGGESTIONS:
+        return [f"guestSuggestions holds more than {MAX_GUEST_SUGGESTIONS} entries"]
     problems = []
     for index, item in enumerate(suggestions):
         where = f"guestSuggestions[{index}]"
@@ -117,6 +186,16 @@ def _validate_suggestions(suggestions):
             problems.append(f"{where}.email must be a non-empty string")
         if "name" in item and not isinstance(item["name"], str):
             problems.append(f"{where}.name must be a string when present")
+        problems.extend(_suggestion_length_problems(where, item))
+    return problems
+
+
+def _suggestion_length_problems(where, item):
+    problems = []
+    for field, limit in SUGGESTION_LENGTHS.items():
+        value = item.get(field)
+        if isinstance(value, str) and len(value) > limit:
+            problems.append(f"{where}.{field} is longer than {limit} characters")
     return problems
 
 
@@ -173,6 +252,16 @@ def _validate_event(index, event):
     if "reminders" in event and not _is_minutes_list(event["reminders"]):
         problems.append(f"{where}.reminders must be a list of non-negative integers when present")
 
+    problems.extend(_length_problems(where, event))
+    return problems
+
+
+def _length_problems(where, event):
+    problems = []
+    for field, limit in FIELD_LENGTHS.items():
+        value = event.get(field)
+        if isinstance(value, str) and len(value) > limit:
+            problems.append(f"{where}.{field} is longer than {limit} characters")
     return problems
 
 

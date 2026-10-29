@@ -43,6 +43,7 @@ Column {
   }
 
   Text {
+    textFormat: Text.PlainText
     visible: root.calendars.length === 0
     width: parent.width
     text: root.tr("settings.noCalendars")

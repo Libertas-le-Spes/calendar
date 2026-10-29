@@ -94,6 +94,7 @@ Item {
     }
 
     Text {
+      textFormat: Text.PlainText
       anchors.left: backButton.right
       anchors.leftMargin: Style.space(10)
       anchors.verticalCenter: parent.verticalCenter
@@ -105,6 +106,7 @@ Item {
     }
 
     Text {
+      textFormat: Text.PlainText
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
       text: root.tr("layout.saved")
@@ -138,6 +140,7 @@ Item {
           : navMouse.containsMouse ? Style.hoverFillFor(root.foreground, Color.accent) : "transparent"
 
         Text {
+          textFormat: Text.PlainText
           id: navIcon
           anchors.left: parent.left
           anchors.leftMargin: Style.space(8)
@@ -149,6 +152,7 @@ Item {
         }
 
         Text {
+          textFormat: Text.PlainText
           anchors.left: navIcon.right
           anchors.leftMargin: Style.space(8)
           anchors.verticalCenter: parent.verticalCenter
@@ -160,6 +164,7 @@ Item {
         }
 
         Text {
+          textFormat: Text.PlainText
           visible: navItem.modelData.id === "calendars" && root.calendars.length > 0
           anchors.right: parent.right
           anchors.rightMargin: Style.space(8)

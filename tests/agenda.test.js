@@ -253,7 +253,7 @@ test('relativeTime for all-day rows uses the row day', () => {
   assert.equal(Model.relativeTime(null, NOW, 'en'), '')
 })
 
-test('meetingHost names the common services and nothing else', () => {
+test('meetingHost names the common services', () => {
   assert.equal(Model.meetingHost('https://meet.google.com/abc-defg-hij'), 'Google Meet')
   assert.equal(Model.meetingHost('https://us02web.zoom.us/j/123?pwd=x'), 'Zoom')
   assert.equal(Model.meetingHost('https://zoom.us/j/1'), 'Zoom')
@@ -261,12 +261,24 @@ test('meetingHost names the common services and nothing else', () => {
   assert.equal(Model.meetingHost('https://acme.webex.com/meet/x'), 'Webex')
   assert.equal(Model.meetingHost('https://meet.jit.si/room'), 'Jitsi')
   assert.equal(Model.meetingHost('https://whereby.com/room'), 'Whereby')
-  assert.equal(Model.meetingHost('https://example.com/zoom.us'), '')
-  assert.equal(Model.meetingHost('https://zoom.us.evil.com/j/1'), '')
-  assert.equal(Model.meetingHost('https://meet.google.com@evil.com/x'), '')
   assert.equal(Model.meetingHost('http://meet.google.com/abc'), '')
   assert.equal(Model.meetingHost(''), '')
   assert.equal(Model.meetingHost(null), '')
+})
+
+test('meetingHost names the real host of a link to a service it does not know', () => {
+  assert.equal(Model.meetingHost('https://example.com/zoom.us'), 'example.com')
+  assert.equal(Model.meetingHost('https://zoom.us.evil.example/j/1'), 'zoom.us.evil.example')
+  assert.equal(Model.meetingHost('https://jitsi.evil.example/room'), 'jitsi.evil.example')
+})
+
+test('meetingHost names nothing for a link that hides its host', () => {
+  assert.equal(Model.meetingHost('https://evil.example@meet.google.com/abc-defg-hij'), '')
+  assert.equal(Model.meetingHost('https://evil.example\\@meet.google.com/abc-defg-hij'), '')
+})
+
+test('meetingHost names nothing for a host in letters that could pass for another', () => {
+  assert.equal(Model.meetingHost('https://meet.g\u043e\u043egle.com/abc-defg-hij'), '')
 })
 
 test('mapsUrl builds a Google Maps search for a real place', () => {
@@ -289,4 +301,24 @@ test('mapsUrl is empty for links, video services and blanks', () => {
 test('mapsUrl output passes safeUrl', () => {
   const url = Model.mapsUrl('Rua "A" <1>, it\'s here')
   assert.equal(Model.safeUrl(url), url)
+})
+
+test('guestLabel puts the address first, so a long name can only cut itself off', () => {
+  const long = 'Made-up Manager (Finance team) '.repeat(4)
+  const label = Model.guestLabel({ email: 'stranger@example.invalid', name: long })
+  assert.ok(label.startsWith('stranger@example.invalid  ('))
+})
+
+test('guestLabel is the address alone when there is no name', () => {
+  assert.equal(Model.guestLabel({ email: 'made-up@example.invalid', name: '  ' }), 'made-up@example.invalid')
+})
+
+test('meetingHost names nothing for a host too long to show whole', () => {
+  const lookalike = 'https://meet.google.com.' + 'a'.repeat(30) + '.evil.example/abc'
+  assert.equal(Model.meetingHost(lookalike), '')
+})
+
+test('meetingHost names a host up to the longest it shows', () => {
+  const host = 'a'.repeat(Model.LONGEST_SHOWN_HOST - '.example'.length) + '.example'
+  assert.equal(Model.meetingHost('https://' + host + '/room'), host)
 })

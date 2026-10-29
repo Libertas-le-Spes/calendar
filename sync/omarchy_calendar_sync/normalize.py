@@ -8,8 +8,8 @@ testable without freezing time.
 import re
 from datetime import date, datetime, time, timedelta
 
-from .contract import is_https_url
-from .plaintext import description_text
+from .contract import FIELD_LENGTHS, is_https_url
+from .plaintext import clipped, description_text
 
 NO_TITLE = "(no title)"
 
@@ -21,6 +21,8 @@ def _https_only(value):
     anything else is dropped rather than handed to the widget.
     """
     text = str(value or "").strip()
+    if len(text) > FIELD_LENGTHS["meetingUrl"]:
+        return ""
     return text if is_https_url(text) else ""
 
 
@@ -52,7 +54,7 @@ def _meeting_url_in_text(*texts):
     return ""
 
 
-def _meeting_url(gevent):
+def meeting_url(gevent):
     """The video link for an event, preferring the one Google resolves itself."""
     direct = _https_only(gevent.get("hangoutLink"))
     if direct:
@@ -115,19 +117,20 @@ def row_order(row):
     return (row["dateKey"], row["start"], row["title"])
 
 
-def normalize_all(gevents, calendar, tz):
+def normalize_all(gevents, calendar, tz, window):
     """Normalize a list of Google events, flattening the per-day rows."""
     rows = []
     for gevent in gevents:
-        rows.extend(normalize_event(gevent, calendar, tz))
+        rows.extend(normalize_event(gevent, calendar, tz, window))
     return rows
 
 
-def normalize_event(gevent, calendar, tz):
-    """Return one contract row per local day this event covers.
+def normalize_event(gevent, calendar, tz, window):
+    """Return one contract row per local day this event covers in `window`.
 
     Rows produced from a single Google event share its id, so consumers must
-    key on id plus dateKey, never on id alone.
+    key on id plus dateKey, never on id alone. `window` is a
+    config.DayWindow from config.local_days_in_window: days outside it get no row, however long the event.
     """
     if gevent.get("status") == "cancelled":
         return []
@@ -151,12 +154,12 @@ def normalize_event(gevent, calendar, tz):
     if not all_day and end_dt < start_dt:
         return []
 
-    title = (gevent.get("summary") or "").strip() or NO_TITLE
-    location = gevent.get("location") or ""
+    title = _clipped((gevent.get("summary") or "").strip() or NO_TITLE, "title")
+    location = _clipped(gevent.get("location") or "", "location")
     start_iso = start_dt.isoformat()
     end_iso = end_dt.isoformat()
 
-    meeting_url = _meeting_url(gevent)
+    meeting_link = meeting_url(gevent)
     event_url = _https_only(gevent.get("htmlLink"))
     event_type = str(gevent.get("eventType") or "")
     response_status = _response_status(gevent)
@@ -167,7 +170,7 @@ def normalize_event(gevent, calendar, tz):
         {
             "id": gevent.get("id", ""),
             "calendarId": calendar["id"],
-            "calendarName": calendar["name"],
+            "calendarName": _clipped(calendar["name"], "calendarName"),
             "color": calendar["color"],
             "dateKey": day.isoformat(),
             "start": start_iso,
@@ -175,15 +178,19 @@ def normalize_event(gevent, calendar, tz):
             "allDay": all_day,
             "title": title,
             "location": location,
-            "meetingUrl": meeting_url,
+            "meetingUrl": meeting_link,
             "eventUrl": event_url,
             "eventType": event_type,
             "responseStatus": response_status,
             "description": description,
             "reminders": reminders,
         }
-        for day in _covered_days(start_dt, end_dt, all_day)
+        for day in _covered_days(start_dt, end_dt, all_day, window)
     ]
+
+
+def _clipped(text, field):
+    return clipped(text, FIELD_LENGTHS[field])
 
 
 def _parse_endpoint(node, tz):
@@ -200,8 +207,8 @@ def _parse_endpoint(node, tz):
     return parsed_dt.astimezone(tz), False
 
 
-def _covered_days(start_dt, end_dt, all_day):
-    """Inclusive list of local dates the event occupies."""
+def _covered_days(start_dt, end_dt, all_day, window):
+    """Inclusive list of local dates the event occupies inside `window`."""
     first = start_dt.date()
 
     if all_day:
@@ -215,6 +222,9 @@ def _covered_days(start_dt, end_dt, all_day):
 
     if last < first:
         last = first
+
+    first = max(first, window.first)
+    last = min(last, window.last)
 
     days = []
     cursor = first

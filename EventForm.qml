@@ -144,6 +144,7 @@ Column {
     verticalItemAlignment: Grid.AlignVCenter
 
     Text {
+      textFormat: Text.PlainText
       width: fieldRow.stacked ? fieldRow.width : Style.space(64)
       text: fieldRow.label
       wrapMode: Text.WordWrap
@@ -215,6 +216,7 @@ Column {
   }
 
   Text {
+    textFormat: Text.PlainText
     width: parent.width
     visible: root.isEditing && String(root.form.recurringEventId || "") !== ""
     text: root.tr("form.seriesNote")
@@ -338,6 +340,7 @@ Column {
       Keys.onEscapePressed: function(event) { root.canceled(); event.accepted = true }
 
       Text {
+        textFormat: Text.PlainText
         width: parent.width
         visible: descriptionField.text === "" && !descriptionField.activeFocus
         text: root.tr("form.descriptionPlaceholder")

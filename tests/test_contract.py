@@ -1,8 +1,10 @@
 import json
+import re
 import unittest
+from unittest import mock
 from pathlib import Path
 
-from omarchy_calendar_sync import contract
+from omarchy_calendar_sync import colors, contract
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -144,6 +146,139 @@ class TestHttpsUrl(unittest.TestCase):
         for bad in ("http://x.example", "https://x.example/a b", "https://x.example/\u00a0",
                     "https://x.example/\"", "https://x.example/<", "", None, 5):
             self.assertFalse(contract.is_https_url(bad), bad)
+
+
+
+LINK_FIELDS = ("meetingUrl", "eventUrl")
+
+
+def sound_row(**changes):
+    row = {
+        "id": "made-up-1",
+        "calendarId": "made-up@example.invalid",
+        "calendarName": "Made-up",
+        "color": "#4285f4",
+        "dateKey": "2026-10-21",
+        "start": "2026-10-21T09:00:00+00:00",
+        "end": "2026-10-21T10:00:00+00:00",
+        "allDay": False,
+        "title": "Made-up meeting",
+        "location": "",
+    }
+    row.update(changes)
+    return row
+
+
+def document_with(rows):
+    return contract.build_document(rows, "2026-10-21T08:00:00+00:00", "made-up/1")
+
+
+class TestCeilings(unittest.TestCase):
+    def test_a_document_at_the_row_ceiling_is_valid(self):
+        rows = [sound_row()] * contract.MAX_EVENT_ROWS
+        self.assertEqual(contract.validate(document_with(rows)), [])
+
+    def test_a_document_one_row_over_the_ceiling_is_refused(self):
+        rows = [sound_row()] * (contract.MAX_EVENT_ROWS + 1)
+        self.assertEqual(len(contract.validate(document_with(rows))), 1)
+
+    def test_every_capped_text_field_at_its_limit_is_sound(self):
+        for field, limit in contract.FIELD_LENGTHS.items():
+            if field in LINK_FIELDS:
+                continue
+            with self.subTest(field=field):
+                self.assertEqual(contract.event_problems(sound_row(**{field: "x" * limit})), [])
+
+    def test_every_link_at_its_limit_is_sound(self):
+        for field in LINK_FIELDS:
+            limit = contract.FIELD_LENGTHS[field]
+            with self.subTest(field=field):
+                link = "https://" + "x" * (limit - len("https://"))
+                self.assertEqual(contract.event_problems(sound_row(**{field: link})), [])
+
+    def test_every_capped_field_one_character_over_its_limit_is_a_problem(self):
+        for field, limit in contract.FIELD_LENGTHS.items():
+            with self.subTest(field=field):
+                problems = contract.event_problems(sound_row(**{field: "x" * (limit + 1)}))
+                self.assertIn(f"events[0].{field} is longer than {limit} characters", problems)
+
+    def test_a_sound_row_has_no_problems(self):
+        self.assertEqual(contract.event_problems(sound_row()), [])
+
+
+class TestDocumentSize(unittest.TestCase):
+    def test_a_document_at_the_size_ceiling_is_fine(self):
+        self.assertEqual(contract.size_problem("x" * contract.MAX_DOCUMENT_BYTES), "")
+
+    def test_a_document_one_byte_over_the_size_ceiling_is_a_problem(self):
+        self.assertNotEqual(contract.size_problem("x" * (contract.MAX_DOCUMENT_BYTES + 1)), "")
+
+    def test_the_size_counts_bytes_not_characters(self):
+        self.assertNotEqual(contract.size_problem("é" * (contract.MAX_DOCUMENT_BYTES // 2 + 1)), "")
+
+    def test_a_sound_document_is_checked_into_text_that_reads_back(self):
+        doc = document_with([sound_row()])
+        text, problems = contract.checked(doc)
+        self.assertEqual(problems, [])
+        self.assertTrue(text.endswith("\n"))
+        self.assertEqual(json.loads(text), doc)
+
+    def test_a_document_over_the_size_ceiling_is_checked_into_a_problem(self):
+        with mock.patch.object(contract, "MAX_DOCUMENT_BYTES", 10):
+            _, problems = contract.checked(document_with([sound_row()]))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("more than 10", problems[0])
+
+    def test_an_invalid_row_is_checked_into_a_problem(self):
+        _, problems = contract.checked(document_with([sound_row(allDay="no")]))
+        self.assertEqual(problems, ["events[0].allDay must be a boolean"])
+
+
+class TestUsableColor(unittest.TestCase):
+    def test_a_contract_color_is_kept(self):
+        self.assertEqual(colors.usable_color("#a1b2c3", 0), "#a1b2c3")
+
+    def test_a_color_with_alpha_takes_the_palette_color_for_its_position(self):
+        self.assertEqual(colors.usable_color("#a1b2c3ff", 1), colors.CALENDAR_COLORS[1])
+
+    def test_a_missing_color_takes_the_palette_color_for_its_position(self):
+        self.assertEqual(colors.usable_color(None, 0), colors.CALENDAR_COLORS[0])
+
+    def test_positions_past_the_palette_wrap_around(self):
+        position = len(colors.CALENDAR_COLORS) + 2
+        self.assertEqual(colors.usable_color("red", position), colors.CALENDAR_COLORS[2])
+
+
+def widget_number(name):
+    source = (Path(__file__).parent.parent / "EventsFile.js").read_text()
+    match = re.search(r"^var %s = ([\d *]+)$" % name, source, re.MULTILINE)
+    product = 1
+    for factor in match.group(1).split("*"):
+        product *= int(factor)
+    return product
+
+
+class TestWidgetAgrees(unittest.TestCase):
+    def test_the_widget_reads_the_same_version(self):
+        self.assertEqual(widget_number("CONTRACT_VERSION"), contract.CONTRACT_VERSION)
+
+    def test_the_widget_refuses_at_the_same_row_ceiling(self):
+        self.assertEqual(widget_number("MAX_EVENT_ROWS"), contract.MAX_EVENT_ROWS)
+
+    def test_the_widget_refuses_at_the_same_size_ceiling(self):
+        self.assertEqual(widget_number("MAX_DOCUMENT_BYTES"), contract.MAX_DOCUMENT_BYTES)
+
+
+class TestWrittenSize(unittest.TestCase):
+    def test_rows_are_measured_as_the_file_writes_them(self):
+        rows = [sound_row(title="Made-up é")]
+        expected = len(contract.serialized({"events": rows}).encode("utf-8"))
+        self.assertEqual(contract.written_size(rows), expected)
+
+    def test_the_written_document_uses_the_same_serializer(self):
+        doc = document_with([sound_row()])
+        text, _ = contract.checked(doc)
+        self.assertEqual(text, contract.serialized(doc))
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+from datetime import date
 import contextlib
 import io
 import json
@@ -9,6 +10,9 @@ from zoneinfo import ZoneInfo
 
 from omarchy_calendar_sync import event_cli
 from omarchy_calendar_sync.gws import GwsAuthError, GwsNotFound, GwsSignInError
+from omarchy_calendar_sync.config import DayWindow
+
+WIDE_WINDOW = DayWindow(date(2000, 1, 1), date(2100, 12, 31))
 
 BOGOTA = ZoneInfo("America/Bogota")
 ME = {"id": "me@example.com", "name": "Me", "color": "#7bd148"}
@@ -99,7 +103,7 @@ class TestPerform(unittest.TestCase):
 
     def run_event(self, raw, client, cfg=ON):
         return event_cli.perform(
-            raw, cfg, client, self.path, BOGOTA,
+            raw, cfg, client, self.path, BOGOTA, WIDE_WINDOW,
             lambda: self.background.append(1), lambda: self.inline.append(1),
         )
 
@@ -129,6 +133,15 @@ class TestPerform(unittest.TestCase):
         self.assertEqual(client.calls[0][2], "all")
         self.assertIn("new1", [r["id"] for r in self.events()])
         self.assertEqual((self.background, self.inline), ([1], []))
+
+    def test_a_spliced_file_that_breaks_the_contract_is_not_written(self):
+        client = FakeClient(reply=resource("new1"))
+        before = self.path.read_text()
+        with mock.patch.object(event_cli.contract, "MAX_DOCUMENT_BYTES", 10):
+            code, _ = self.run_event({"action": "create", "sendUpdates": "all", "event": form()}, client)
+        self.assertEqual(code, 0)
+        self.assertEqual(self.path.read_text(), before)
+        self.assertEqual(self.background, [1])
 
     def test_create_of_a_series_syncs_inline_instead_of_splicing(self):
         client = FakeClient(reply=dict(MASTER, id="new1"))

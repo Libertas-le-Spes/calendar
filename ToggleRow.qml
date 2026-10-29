@@ -70,6 +70,7 @@ Rectangle {
     }
 
     Text {
+      textFormat: Text.PlainText
       width: parent.width
       visible: toggle.hint !== ""
       text: toggle.hint
@@ -81,6 +82,7 @@ Rectangle {
   }
 
   Text {
+    textFormat: Text.PlainText
     id: noteText
     anchors.right: toggleSwitch.left
     anchors.rightMargin: toggle.note !== "" ? Style.space(8) : 0

@@ -21,6 +21,10 @@ Column {
   property bool canWrite: false
   property bool writeSetupCopied: false
   property string syncState: "missing"
+  readonly property var fileProblemKeys: ({
+    "version": "settings.syncVersion",
+    "too-large": "settings.syncTooLarge"
+  })
   property string setupCommand: ""
   property bool setupCommandCopied: false
   property int eventCount: 0
@@ -91,6 +95,7 @@ Column {
     spacing: Style.space(1)
 
     Text {
+      textFormat: Text.PlainText
       text: root.tr("settings.sync")
       color: root.foreground
       font.family: root.fontFamily
@@ -110,7 +115,8 @@ Column {
       text: {
         if (missing)
           return root.tr(root.setupCommandCopied ? "sync.copied" : "settings.syncMissing", [root.setupCommand])
-        if (root.syncState === "version") return root.tr("settings.syncVersion")
+        var problemKey = root.fileProblemKeys[root.syncState]
+        if (problemKey) return root.tr(problemKey)
 
         var lines = [Strings.trn(root.language, "settings.syncEvents", root.eventCount, [root.eventCount, root.sourceLabel])]
         lines.push(root.syncState === "stale"

@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
+import "EventsFile.js" as EventsFile
 import "Model.js" as Model
 import "QuickAddParser.js" as QuickAddParser
 import "Strings.js" as Strings
@@ -90,14 +91,17 @@ Panel {
   //      ICS feed and a shell script all look identical from here.
   property var eventDoc: null
   property var eventIndex: ({})
-  property bool eventVersionMismatch: false
+  property string eventFileProblem: ""
 
   // Matches the sync timer's interval. Model.syncState allows four of these
   // to elapse before calling the file stale, so one missed run stays quiet.
   readonly property int syncIntervalSeconds: 300
-  readonly property string syncState: eventVersionMismatch
-    ? "version"
-    : Model.syncState(eventDoc, nowMs, syncIntervalSeconds)
+  readonly property string syncState: syncStateOf(eventFileProblem, eventDoc, nowMs)
+
+  function syncStateOf(fileProblem, doc, now) {
+    if (fileProblem === "" || fileProblem === "missing") return Model.syncState(doc, now, syncIntervalSeconds)
+    return fileProblem
+  }
 
   // Spelled out in full because the people who need it installed from the
   // marketplace and never opened the README. Resolved from this file's own
@@ -293,21 +297,9 @@ Panel {
   readonly property int columnPadding: Style.space(14)
 
   function applyEvents(raw) {
-    var doc = null
-    var mismatch = false
-    if (raw) {
-      try {
-        var parsed = JSON.parse(raw)
-        if (parsed && parsed.version === 1) doc = parsed
-        // Written by a newer sync than this widget understands. Say so
-        // rather than render an empty month that reads as a quiet week.
-        else if (parsed && parsed.version !== undefined) mismatch = true
-      } catch (error) {
-        doc = null
-      }
-    }
-    root.eventDoc = doc
-    root.eventVersionMismatch = mismatch
+    var result = EventsFile.read(raw)
+    root.eventDoc = result.doc
+    root.eventFileProblem = result.problem
     root.rebuildIndex()
   }
 

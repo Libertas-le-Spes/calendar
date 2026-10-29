@@ -1,9 +1,13 @@
 import unittest
 
-from omarchy_calendar_sync.plaintext import DESCRIPTION_LIMIT, description_text
+from omarchy_calendar_sync.plaintext import DESCRIPTION_LIMIT, RAW_DESCRIPTION_LIMIT, description_text
 
 
 class TestDescriptionText(unittest.TestCase):
+    def test_text_past_the_raw_limit_is_never_read(self):
+        raw = "a" * RAW_DESCRIPTION_LIMIT + "TAIL"
+        self.assertNotIn("TAIL", description_text(raw, limit=2 * RAW_DESCRIPTION_LIMIT))
+
     def test_line_breaks_and_paragraphs_become_newlines(self):
         self.assertEqual(description_text("a<br>b<br/>c<p>d</p><div>e</div>"), "a\nb\nc\nd\ne")
 

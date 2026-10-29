@@ -59,6 +59,7 @@ Item {
     spacing: Style.space(14)
 
     Text {
+      textFormat: Text.PlainText
       id: heroIcon
       anchors.verticalCenter: parent.verticalCenter
       text: "󰃭"

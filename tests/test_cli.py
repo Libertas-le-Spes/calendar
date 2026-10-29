@@ -3,11 +3,13 @@ import io
 import json
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from omarchy_calendar_sync import cli, config, contract, gws
+from omarchy_calendar_sync import cli, colors, config, contract, gws
+from omarchy_calendar_sync.errors import CalendarUnreadable, TooManyEvents
 
 BOGOTA = ZoneInfo("America/Bogota")
 NOW = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
@@ -65,13 +67,13 @@ class TestWriteAtomic(unittest.TestCase):
     def test_creates_parent_directories(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "nested" / "deeper" / "out.json"
-            cli.write_atomic(path, {"hello": "world"})
-            self.assertEqual(json.loads(path.read_text()), {"hello": "world"})
+            cli.write_atomic(path, '{"hello": "world"}\n')
+            self.assertEqual(path.read_text(), '{"hello": "world"}\n')
 
     def test_leaves_no_temp_file_behind(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "out.json"
-            cli.write_atomic(path, {"hello": "world"})
+            cli.write_atomic(path, "{}\n")
             self.assertEqual([p.name for p in Path(tmp).iterdir()], ["out.json"])
 
 
@@ -294,6 +296,269 @@ class TestWritableCalendars(unittest.TestCase):
 
     def test_writing_is_off_by_default(self):
         self.assertIs(config.DEFAULTS["write"], False)
+
+
+class CrowdedCalendarGws(FakeGws):
+    def events(self, calendar_id, time_min, time_max):
+        if calendar_id == "crowded@example.com":
+            raise TooManyEvents()
+        return super().events(calendar_id, time_min, time_max)
+
+
+class TestCrowdedCalendar(unittest.TestCase):
+    CALENDARS = [
+        {"id": "crowded@example.com", "name": "Made-up crowded", "color": "#f83a22"},
+        {"id": "quiet@example.com", "name": "Made-up quiet", "color": "#7bd148"},
+    ]
+
+    def run_sync(self):
+        client = CrowdedCalendarGws(calendars=self.CALENDARS)
+        written = mock.create_autospec(cli.write_atomic)
+        stderr = io.StringIO()
+        with mock.patch.object(cli, "write_atomic", written), contextlib.redirect_stderr(stderr):
+            code = run_quietly(client, config.DEFAULTS, NOW, "events.json", BOGOTA)
+        return code, written, stderr.getvalue()
+
+    def test_the_other_calendars_are_still_written(self):
+        code, written, _ = self.run_sync()
+        self.assertEqual(code, cli.EXIT_OK)
+        written.assert_called_once()
+        calendar_ids = set()
+        for row in json.loads(written.call_args.args[1])["events"]:
+            calendar_ids.add(row["calendarId"])
+        self.assertEqual(calendar_ids, {"quiet@example.com"})
+
+    def test_the_skipped_calendar_is_named_in_the_log(self):
+        _, _, log = self.run_sync()
+        self.assertIn("skipping calendar 'Made-up crowded'", log)
+
+
+def made_up_event(event_id, **changes):
+    event = {
+        "id": event_id,
+        "status": "confirmed",
+        "summary": "Made-up meeting",
+        "start": {"dateTime": "2026-08-10T09:00:00-05:00"},
+        "end": {"dateTime": "2026-08-10T09:15:00-05:00"},
+    }
+    event.update(changes)
+    return event
+
+
+def sync_capturing(client):
+    written = mock.create_autospec(cli.write_atomic)
+    stderr = io.StringIO()
+    with mock.patch.object(cli, "write_atomic", written), contextlib.redirect_stderr(stderr):
+        code = run_quietly(client, config.DEFAULTS, NOW, "events.json", BOGOTA)
+    return code, written, stderr.getvalue()
+
+
+def written_rows(written):
+    return json.loads(written.call_args.args[1])["events"]
+
+
+class UnreadableGws(FakeGws):
+    def __init__(self, unreadable, **kwargs):
+        super().__init__(**kwargs)
+        self.unreadable = unreadable
+
+    def events(self, calendar_id, time_min, time_max):
+        if calendar_id in self.unreadable:
+            raise CalendarUnreadable("its events cannot be expanded (ValueError)")
+        return super().events(calendar_id, time_min, time_max)
+
+
+class TestOneBadCalendar(unittest.TestCase):
+    TWO = [
+        {"id": "broken@example.com", "name": "Made-up broken", "color": "#f83a22"},
+        {"id": "fine@example.com", "name": "Made-up fine", "color": "#7bd148"},
+    ]
+
+    def test_a_calendar_color_outside_the_contract_takes_a_palette_color(self):
+        calendars = [{"id": "a@example.com", "name": "Made-up feed", "color": "#a1b2c3ff"}]
+        code, written, _ = sync_capturing(FakeGws(calendars=calendars))
+        self.assertEqual(code, cli.EXIT_OK)
+        self.assertEqual(written_rows(written)[0]["color"], colors.CALENDAR_COLORS[0])
+
+    def test_a_row_that_breaks_the_contract_is_dropped_and_the_rest_written(self):
+        events = [made_up_event("x" * (contract.FIELD_LENGTHS["id"] + 1)), made_up_event("kept")]
+        code, written, log = sync_capturing(FakeGws(events=events))
+        self.assertEqual(code, cli.EXIT_OK)
+        self.assertEqual([row["id"] for row in written_rows(written)], ["kept"])
+        self.assertIn("dropping 1 rows from calendar 'Personal'", log)
+
+    def test_an_unreadable_calendar_is_skipped_and_the_others_written(self):
+        client = UnreadableGws({"broken@example.com"}, calendars=self.TWO)
+        code, written, log = sync_capturing(client)
+        self.assertEqual(code, cli.EXIT_OK)
+        calendar_ids = set()
+        for row in written_rows(written):
+            calendar_ids.add(row["calendarId"])
+        self.assertEqual(calendar_ids, {"fine@example.com"})
+        self.assertIn("skipping calendar 'Made-up broken'", log)
+
+    def test_when_every_calendar_is_skipped_nothing_is_written(self):
+        client = UnreadableGws({"broken@example.com", "fine@example.com"}, calendars=self.TWO)
+        code, written, _ = sync_capturing(client)
+        self.assertEqual(code, cli.EXIT_SYNC_FAILED)
+        written.assert_not_called()
+
+    def test_a_document_over_the_size_ceiling_is_not_written(self):
+        with mock.patch.object(contract, "MAX_DOCUMENT_BYTES", 10):
+            code, written, log = sync_capturing(FakeGws())
+        self.assertEqual(code, cli.EXIT_SYNC_FAILED)
+        written.assert_not_called()
+        self.assertIn("would make the events file too large", log)
+
+
+class TestCopiesThatDiffer(unittest.TestCase):
+    START = "2026-08-10T19:15:00-05:00"
+
+    def rows_for(self, calendars, copies):
+        code, written, _ = sync_capturing(FakeGws(calendars=calendars, events=copies))
+        self.assertEqual(code, cli.EXIT_OK)
+        return written_rows(written)
+
+    def with_link(self, summary, link):
+        event = gevent("shared@google.com", self.START, summary)
+        event["hangoutLink"] = link
+        return event
+
+    def test_a_copy_from_someone_elses_calendar_that_sorts_first_cannot_replace_the_event(self):
+        calendars = [
+            {"id": "aaa@example.com", "name": "Aaa made-up", "color": "#f83a22"},
+            {"id": "team@example.com", "name": "Team", "color": "#7bd148"},
+        ]
+        copies = {
+            "aaa@example.com": [self.with_link("Made-up review", "https://evil.example.invalid/join")],
+            "team@example.com": [self.with_link("Made-up review", "https://meet.google.com/abc-defg-hij")],
+        }
+        links = set()
+        for row in self.rows_for(calendars, copies):
+            links.add(row["meetingUrl"])
+        self.assertEqual(links, {"https://evil.example.invalid/join", "https://meet.google.com/abc-defg-hij"})
+
+    def test_a_calendar_shared_with_write_access_still_cannot_replace_the_event(self):
+        calendars = [
+            {"id": "aaa@example.com", "name": "Aaa made-up", "color": "#f83a22", "writable": True},
+            {"id": "team@example.com", "name": "Team", "color": "#7bd148"},
+        ]
+        copies = {
+            "aaa@example.com": [gevent("shared@google.com", self.START, "Something else")],
+            "team@example.com": [gevent("shared@google.com", self.START, "Made-up review")],
+        }
+        titles = set()
+        for row in self.rows_for(calendars, copies):
+            titles.add(row["title"])
+        self.assertEqual(titles, {"Something else", "Made-up review"})
+
+
+class TestCalendarsWithoutAColour(unittest.TestCase):
+    def test_two_calendars_without_a_colour_get_different_ones(self):
+        calendars = [
+            {"id": "a@example.com", "name": "Made-up one", "color": ""},
+            {"id": "b@example.com", "name": "Made-up two", "color": ""},
+        ]
+        copies = {
+            "a@example.com": [made_up_event("one")],
+            "b@example.com": [made_up_event("two")],
+        }
+        _, written, _ = sync_capturing(FakeGws(calendars=calendars, events=copies))
+        found = set()
+        for row in written_rows(written):
+            found.add(row["color"])
+        self.assertEqual(found, {colors.CALENDAR_COLORS[0], colors.CALENDAR_COLORS[1]})
+
+
+def all_day_event(event_id, start, end):
+    return {"id": event_id, "status": "confirmed", "summary": "Made-up long", "start": {"date": start}, "end": {"date": end}}
+
+
+class TestFloodedCalendar(unittest.TestCase):
+    CALENDARS = [
+        {"id": "flood@example.com", "name": "Made-up flood", "color": "#f83a22"},
+        {"id": "quiet@example.com", "name": "Made-up quiet", "color": "#7bd148"},
+    ]
+
+    def test_a_calendar_whose_rows_would_pass_the_ceiling_is_skipped_and_the_others_written(self):
+        copies = {
+            "flood@example.com": [all_day_event("long", "2026-08-01", "2026-09-01")],
+            "quiet@example.com": [made_up_event("kept")],
+        }
+        with mock.patch.object(contract, "MAX_EVENT_ROWS", 10):
+            code, written, log = sync_capturing(FakeGws(calendars=self.CALENDARS, events=copies))
+        self.assertEqual(code, cli.EXIT_OK)
+        self.assertEqual([row["id"] for row in written_rows(written)], ["kept"])
+        self.assertIn("skipping calendar 'Made-up flood'", log)
+
+    def test_a_skipped_calendar_does_not_hide_another_calendars_copy_of_an_event(self):
+        shared = gevent("shared@google.com", "2026-08-10T19:15:00-05:00", "Made-up review")
+        copies = {
+            "flood@example.com": [all_day_event("long", "2026-08-01", "2026-09-01"), shared],
+            "quiet@example.com": [dict(shared, id="quiet-copy")],
+        }
+        with mock.patch.object(contract, "MAX_EVENT_ROWS", 10):
+            _, written, _ = sync_capturing(FakeGws(calendars=self.CALENDARS, events=copies))
+        self.assertEqual([row["id"] for row in written_rows(written)], ["quiet-copy"])
+
+
+class TestCopiesThatDifferInPlaceDetailsOrReminders(unittest.TestCase):
+    START = "2026-08-10T19:15:00-05:00"
+    CALENDARS = [
+        {"id": "aaa@example.com", "name": "Aaa made-up", "color": "#f83a22"},
+        {"id": "team@example.com", "name": "Team", "color": "#7bd148"},
+    ]
+
+    def copy(self, **changes):
+        event = gevent("shared@google.com", self.START, "Made-up review")
+        event.update(changes)
+        return event
+
+    def written_copies(self, first, second):
+        copies = {"aaa@example.com": [first], "team@example.com": [second]}
+        _, written, _ = sync_capturing(FakeGws(calendars=self.CALENDARS, events=copies))
+        return written_rows(written)
+
+    def test_a_copy_with_another_location_is_kept_beside_the_real_one(self):
+        rows = self.written_copies(self.copy(location="Made-up other building"), self.copy(location="Made-up room 4"))
+        locations = set()
+        for row in rows:
+            locations.add(row["location"])
+        self.assertEqual(locations, {"Made-up other building", "Made-up room 4"})
+
+    def test_a_copy_with_another_description_is_kept_beside_the_real_one(self):
+        rows = self.written_copies(self.copy(description="Made-up: see https://evil.example.invalid"), self.copy(description="Agenda"))
+        self.assertEqual(len(rows), 2)
+
+    def test_a_copy_without_the_reminders_is_kept_beside_the_real_one(self):
+        reminded = {"useDefault": False, "overrides": [{"method": "popup", "minutes": 10}]}
+        rows = self.written_copies(self.copy(reminders={"useDefault": False, "overrides": []}), self.copy(reminders=reminded))
+        self.assertEqual(len(rows), 2)
+
+    def test_an_identical_copy_is_still_listed_once(self):
+        self.assertEqual(len(self.written_copies(self.copy(), self.copy())), 1)
+
+
+def writing_client(calendars):
+    client = FakeGws(calendars=calendars)
+    client.can_write = True
+    return client
+
+
+class TestRawEventsKeptOnlyForGuests(unittest.TestCase):
+    def test_without_writing_no_guest_suggestions_are_made(self):
+        with mock.patch.object(cli.suggestions, "guest_suggestions", autospec=True) as suggested:
+            sync_capturing(FakeGws())
+        suggested.assert_not_called()
+
+    def test_with_writing_the_fetched_events_feed_the_guest_suggestions(self):
+        cfg = dict(config.DEFAULTS, write=True)
+        calendars = [{"id": "a@example.com", "name": "Personal", "color": "#f83a22", "writable": True}]
+        written = mock.create_autospec(cli.write_atomic)
+        with mock.patch.object(cli.suggestions, "guest_suggestions", autospec=True, return_value=[]) as suggested, \
+                mock.patch.object(cli, "write_atomic", written), contextlib.redirect_stderr(io.StringIO()):
+            run_quietly(writing_client(calendars), cfg, NOW, "events.json", BOGOTA)
+        self.assertEqual([event["id"] for event in suggested.call_args.args[0]], ["evt1"])
 
 
 if __name__ == "__main__":

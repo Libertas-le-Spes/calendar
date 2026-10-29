@@ -80,6 +80,7 @@ Column {
     height: Math.max(railLabel.implicitHeight, Style.space(10))
 
     Text {
+      textFormat: Text.PlainText
       id: railLabel
       anchors.left: parent.left
       anchors.verticalCenter: parent.verticalCenter
@@ -91,6 +92,7 @@ Column {
     }
 
     Text {
+      textFormat: Text.PlainText
       id: railPercent
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
@@ -138,6 +140,7 @@ Column {
     spacing: Style.space(10)
 
     Text {
+      textFormat: Text.PlainText
       anchors.verticalCenter: parent.verticalCenter
       text: root.tr("life.born").toUpperCase()
       color: Util.alpha(root.foreground, 0.68)
@@ -158,6 +161,7 @@ Column {
     }
 
     Text {
+      textFormat: Text.PlainText
       anchors.verticalCenter: parent.verticalCenter
       leftPadding: Style.space(6)
       text: root.tr("life.liveTo").toUpperCase()

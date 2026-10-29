@@ -64,6 +64,7 @@ Column {
       height: Math.max(nameText.implicitHeight, valueText.implicitHeight, wordsText.implicitHeight)
 
       Text {
+        textFormat: Text.PlainText
         id: nameText
         anchors.left: parent.left
         anchors.baseline: valueText.baseline

@@ -453,10 +453,11 @@ function visibleEvents(events, hidden, options) {
 
 // Only https is ever launched. A meeting link is supplied by whoever sent the
 // invitation, so treating it as trusted input would be a mistake.
+var SAFE_URL = /^https:\/\/[^\s"'<>\\@\/?#\x00-\x1f\x7f\x85\ufeff]+(?:[\/?#][^\s"'<>\\\x00-\x1f\x7f\x85\ufeff]*)?$/
+
 function safeUrl(url) {
   var candidate = text(url).trim()
-  if (candidate.indexOf("https://") !== 0) return ""
-  if (/[\s"'<>]/.test(candidate)) return ""
+  if (!SAFE_URL.test(candidate)) return ""
   return candidate
 }
 
@@ -475,19 +476,32 @@ var MEETING_HOSTS = [
   { pattern: /(^|\.)zoom\.(us|com)$/, name: "Zoom" },
   { pattern: /^teams\.(microsoft|live)\.com$/, name: "Teams" },
   { pattern: /(^|\.)webex\.com$/, name: "Webex" },
-  { pattern: /^meet\.jit\.si$|(^|\.)jitsi\./, name: "Jitsi" },
+  { pattern: /^meet\.jit\.si$/, name: "Jitsi" },
   { pattern: /(^|\.)whereby\.com$/, name: "Whereby" }
 ]
 
-// The service behind a meeting link, for "Join Zoom" rather than a bare
-// "Join". "" for anything unknown or unsafe.
-function meetingHost(url) {
-  var match = safeUrl(url).match(/^https:\/\/(?:[^\/?#@]*@)?([^\/?#:]+)/)
+var LONGEST_SHOWN_HOST = 40
+
+function hostOf(url) {
+  var match = safeUrl(url).match(/^https:\/\/([^\/?#:]+)/)
   if (!match) return ""
-  var host = match[1].toLowerCase()
+  return match[1].toLowerCase()
+}
+
+function meetingService(url) {
+  var host = hostOf(url)
   for (var i = 0; i < MEETING_HOSTS.length; i++)
     if (MEETING_HOSTS[i].pattern.test(host)) return MEETING_HOSTS[i].name
   return ""
+}
+
+function meetingHost(url) {
+  var service = meetingService(url)
+  if (service) return service
+  var host = hostOf(url)
+  if (!/^[a-z0-9.-]+$/.test(host)) return ""
+  if (host.length > LONGEST_SHOWN_HOST) return ""
+  return host
 }
 
 // encodeURIComponent leaves ' ( ) ! * alone, and safeUrl refuses a quote,
@@ -1074,7 +1088,7 @@ function reminderHeadline(event, nowMs, lang) {
 // caller passes formatTime(ms) and formatWeekday(ms).
 function reminderBody(event, nowMs, lang, formatTime, formatWeekday) {
   if (event.allDay)
-    return capitalized(relativeTime(event, nowMs, lang)) + " · " + Strings.tr(lang, "insp.allDay")
+    return escapedMarkup(capitalized(relativeTime(event, nowMs, lang)) + " · " + Strings.tr(lang, "insp.allDay"))
 
   var range = timeRange(event)
   var parts = []
@@ -1086,9 +1100,25 @@ function reminderBody(event, nowMs, lang, formatTime, formatWeekday) {
   if (range.end > range.start) times += "–" + formatTime(range.end)
   parts.push(times)
 
-  var where = meetingHost(meetingUrlFor(event)) || truncateTitle(text(event.location).trim(), 48)
+  var where = reminderPlace(event)
   if (where) parts.push(where)
-  return parts.join(" · ")
+  return escapedMarkup(parts.join(" · "))
+}
+
+function reminderPlace(event) {
+  var url = meetingUrlFor(event)
+  var service = meetingService(url)
+  if (service) return service
+  var location = truncateTitle(text(event.location).trim(), 48)
+  var host = meetingHost(url)
+  if (!url) return location
+  if (!host) return location
+  if (!location) return host
+  return location + " · " + host
+}
+
+function escapedMarkup(value) {
+  return text(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 }
 
 // omarchy-notification-send reads a leading "-g" or "--app-name=…" as an
@@ -1097,6 +1127,13 @@ function reminderBody(event, nowMs, lang, formatTime, formatWeekday) {
 function notificationArg(value) {
   var s = text(value)
   return /^-/.test(s) ? "\u2060" + s : s
+}
+
+function guestLabel(suggestion) {
+  var email = text(suggestion.email)
+  var name = text(suggestion.name).trim()
+  if (!name) return email
+  return email + "  (" + name + ")"
 }
 
 // ---- Layout: which blocks the panel shows

@@ -54,6 +54,7 @@ Column {
       : Math.max(rowLabel.height, slot.height)
 
     Text {
+      textFormat: Text.PlainText
       id: rowLabel
       width: optionRow.stacked ? optionRow.width : optionRow.width - slot.width - optionRow.gap
       y: optionRow.stacked ? 0 : (optionRow.height - height) / 2
@@ -81,6 +82,7 @@ Column {
   }
 
   Text {
+    textFormat: Text.PlainText
     text: (root.expanded ? "▾ " : "▸ ") + root.tr("options.more")
     color: root.faint
     font.family: root.fontFamily

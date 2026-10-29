@@ -60,6 +60,7 @@ Column {
         }
 
         Text {
+          textFormat: Text.PlainText
           anchors.verticalCenter: parent.verticalCenter
           text: Strings.tr(root.language, shortcut.modelData.label)
           color: Util.alpha(root.foreground, 0.55)

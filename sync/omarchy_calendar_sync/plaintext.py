@@ -11,6 +11,7 @@ import re
 from html.parser import HTMLParser
 
 DESCRIPTION_LIMIT = 1500
+RAW_DESCRIPTION_LIMIT = 64 * 1024
 
 # Only markup Google's editor actually emits, so a plain-text description that
 # happens to contain "<ana@example.com>" or "a < b" is left alone.
@@ -73,9 +74,20 @@ class _TextExtractor(HTMLParser):
             self.parts.append("\n")
 
 
+def clipped(text, limit):
+    """`text` cut to at most `limit` characters, ending in an ellipsis when cut."""
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
+def _first_part(text):
+    return text[:RAW_DESCRIPTION_LIMIT]
+
+
 def description_text(raw, limit=DESCRIPTION_LIMIT):
     """`raw` as tidy plain text of at most `limit` characters."""
-    text = str(raw or "").replace("\r\n", "\n").replace("\r", "\n")
+    text = _first_part(str(raw or "")).replace("\r\n", "\n").replace("\r", "\n")
     if _LOOKS_LIKE_HTML.search(text):
         parser = _TextExtractor()
         parser.feed(text)
@@ -86,6 +98,4 @@ def description_text(raw, limit=DESCRIPTION_LIMIT):
 
     lines = [_HORIZONTAL_SPACE.sub(" ", line).strip() for line in text.split("\n")]
     text = _EXTRA_BLANK_LINES.sub("\n\n", "\n".join(lines)).strip()
-    if len(text) > limit:
-        text = text[: limit - 1].rstrip() + "…"
-    return text
+    return clipped(text, limit)

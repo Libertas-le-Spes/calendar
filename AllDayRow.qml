@@ -60,6 +60,7 @@ Rectangle {
       opacity: root.item.done ? 0.6 : 1
 
       Text {
+        textFormat: Text.PlainText
         visible: root.item.done === true
         anchors.centerIn: parent
         text: "󰄬"
@@ -81,6 +82,7 @@ Rectangle {
       border.color: Color.urgent
 
       Text {
+        textFormat: Text.PlainText
         id: badgeLabel
         anchors.centerIn: parent
         text: Strings.tr(root.language, "agenda.deadlineBadge").toUpperCase()

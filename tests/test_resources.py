@@ -1,9 +1,13 @@
+from datetime import date
 """Tests for the Google-shaped resources the eds and ics backends emit."""
 
 import unittest
 from zoneinfo import ZoneInfo
 
 from omarchy_calendar_sync import normalize, resources
+from omarchy_calendar_sync.config import DayWindow
+
+WIDE_WINDOW = DayWindow(date(2000, 1, 1), date(2100, 12, 31))
 
 BOGOTA = ZoneInfo("America/Bogota")
 CALENDAR = {"id": "cal-1", "name": "Work", "color": "#4285f4"}
@@ -32,13 +36,13 @@ class TestBuildEvent(unittest.TestCase):
             "uid-1", {"date": "2026-09-17"}, None, status="CANCELLED")
         self.assertEqual(event["status"], "cancelled")
         self.assertEqual(
-            normalize.normalize_event(event, CALENDAR, BOGOTA), [])
+            normalize.normalize_event(event, CALENDAR, BOGOTA, WIDE_WINDOW), [])
 
     def test_conference_url_lands_where_normalize_looks_for_it(self):
         event = resources.build_event(
             "uid-1", {"dateTime": "2026-09-17T09:00:00+00:00"}, None,
             conference_url="https://meet.google.com/abc-defg-hij")
-        rows = normalize.normalize_event(event, CALENDAR, BOGOTA)
+        rows = normalize.normalize_event(event, CALENDAR, BOGOTA, WIDE_WINDOW)
         self.assertEqual(
             rows[0]["meetingUrl"], "https://meet.google.com/abc-defg-hij")
 
@@ -46,7 +50,7 @@ class TestBuildEvent(unittest.TestCase):
         event = resources.build_event(
             "uid-1", {"dateTime": "2026-09-17T09:00:00+00:00"}, None,
             partstat="NEEDS-ACTION")
-        rows = normalize.normalize_event(event, CALENDAR, BOGOTA)
+        rows = normalize.normalize_event(event, CALENDAR, BOGOTA, WIDE_WINDOW)
         self.assertEqual(rows[0]["responseStatus"], "needsAction")
 
     def test_declined_survives_the_round_trip(self):
@@ -55,7 +59,7 @@ class TestBuildEvent(unittest.TestCase):
         event = resources.build_event(
             "uid-1", {"dateTime": "2026-09-17T09:00:00+00:00"}, None,
             partstat="DECLINED")
-        rows = normalize.normalize_event(event, CALENDAR, BOGOTA)
+        rows = normalize.normalize_event(event, CALENDAR, BOGOTA, WIDE_WINDOW)
         self.assertEqual(rows[0]["responseStatus"], "declined")
 
     def test_unknown_partstat_is_left_blank_rather_than_invented(self):
@@ -73,7 +77,7 @@ class TestEndToEndShape(unittest.TestCase):
             {"dateTime": "2026-09-17T09:30:00+00:00"},
             summary="Standup",
             location="Main Meeting Room")
-        rows = normalize.normalize_event(event, CALENDAR, BOGOTA)
+        rows = normalize.normalize_event(event, CALENDAR, BOGOTA, WIDE_WINDOW)
         self.assertEqual(len(rows), 1)
         row = rows[0]
         self.assertEqual(row["title"], "Standup")
@@ -85,7 +89,7 @@ class TestEndToEndShape(unittest.TestCase):
         event = resources.build_event(
             "uid-1", {"date": "2026-09-24"}, {"date": "2026-09-27"},
             summary="Conference")
-        rows = normalize.normalize_event(event, CALENDAR, BOGOTA)
+        rows = normalize.normalize_event(event, CALENDAR, BOGOTA, WIDE_WINDOW)
         self.assertEqual(
             [row["dateKey"] for row in rows],
             ["2026-09-24", "2026-09-25", "2026-09-26"])
@@ -100,7 +104,7 @@ class TestNewFields(unittest.TestCase):
             "useDefault": False,
             "overrides": [{"method": "popup", "minutes": 10}, {"method": "popup", "minutes": 0}],
         })
-        rows = normalize.normalize_event(event, CALENDAR, BOGOTA)
+        rows = normalize.normalize_event(event, CALENDAR, BOGOTA, WIDE_WINDOW)
         self.assertEqual(rows[0]["reminders"], [0, 10])
 
     def test_no_reminders_means_no_reminders_key(self):
@@ -110,7 +114,7 @@ class TestNewFields(unittest.TestCase):
         event = resources.build_event(
             "uid-1", self.START, None, description="Agenda<br>1. Plan",
             html_link="https://calendar.google.com/calendar/event?eid=abc")
-        row = normalize.normalize_event(event, CALENDAR, BOGOTA)[0]
+        row = normalize.normalize_event(event, CALENDAR, BOGOTA, WIDE_WINDOW)[0]
         self.assertEqual(row["description"], "Agenda\n1. Plan")
         self.assertEqual(row["eventUrl"], "https://calendar.google.com/calendar/event?eid=abc")
 

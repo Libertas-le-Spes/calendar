@@ -69,6 +69,7 @@ Column {
             : "transparent"
 
           Text {
+            textFormat: Text.PlainText
             anchors.centerIn: parent
             text: root.tr("grid.week")
             color: weekStartMouse.containsMouse
@@ -104,6 +105,7 @@ Column {
           model: root.weekdayLabels
 
           Text {
+            textFormat: Text.PlainText
             required property var modelData
             width: root.cellWidth
             height: Style.space(16)
@@ -128,6 +130,7 @@ Column {
           spacing: root.cellSpacing
 
           Text {
+            textFormat: Text.PlainText
             width: root.weekColumnWidth
             height: root.cellHeight
             horizontalAlignment: Text.AlignHCenter
@@ -164,6 +167,7 @@ Column {
               border.color: Style.normalBorderFor(root.foreground, Color.accent)
 
               Text {
+                textFormat: Text.PlainText
                 id: dayNumber
                 anchors.centerIn: parent
                 // Lifted just enough to clear the dots, and only on days
@@ -232,6 +236,7 @@ Column {
     height: monthLabel.implicitHeight + Style.space(10)
 
     Text {
+      textFormat: Text.PlainText
       id: monthLabel
       anchors.centerIn: parent
       width: Style.space(170)

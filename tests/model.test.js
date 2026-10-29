@@ -649,3 +649,9 @@ test('parseLifeExpectancy and parseAge keep their bounds', () => {
   assert.equal(Model.ageFromBirthYear(1979, 2026), 47)
   assert.equal(Model.ageFromBirthYear(2030, 2026), 0)
 })
+
+test('the widget link rule agrees with every shared link case', () => {
+  for (const { link, safe } of require('./fixtures/link-cases.json')) {
+    assert.equal(Model.SAFE_URL.test(link), safe, JSON.stringify(link))
+  }
+})
