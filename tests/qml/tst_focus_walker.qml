@@ -13,10 +13,11 @@ Item {
     id: dialog
 
     property bool opened: false
-    property var keys: []
+    property int selectedIndex: 1
+    property var answers: []
 
     function handleKey(event) {
-      dialog.keys.push(event.key)
+      dialog.answers.push([event.key, dialog.selectedIndex])
     }
   }
 
@@ -82,10 +83,12 @@ Item {
     when: windowShown
 
     function init() {
+      failOnWarning(/Binding loop/)
       walker.opened = true
       walker.formOpen = false
       dialog.opened = false
-      dialog.keys = []
+      dialog.selectedIndex = 1
+      dialog.answers = []
       loader.active = false
       first.visible = true
       scroller.contentY = 0
@@ -139,6 +142,12 @@ Item {
     function test_a_click_on_a_button_hands_the_keys_back_to_the_panel() {
       mouseClick(second)
       tryVerify(function() { return walker.keyTarget.activeFocus })
+    }
+
+    function test_a_click_on_a_button_while_typing_gives_the_keys_back_to_the_text_field() {
+      field.forceActiveFocus()
+      mouseClick(second)
+      tryVerify(function() { return field.activeFocus })
     }
 
     function test_a_click_on_a_text_field_keeps_the_keys_in_it() {
@@ -197,12 +206,32 @@ Item {
       verify(formFirst.activeFocus)
     }
 
-    function test_while_the_delete_confirmation_is_open_its_keys_go_to_it_and_space_answers_like_enter() {
+    function test_the_delete_confirmation_opens_on_cancel() {
       dialog.opened = true
+      compare(dialog.selectedIndex, 0)
+    }
+
+    function test_enter_answers_the_keyboard_choice_even_when_the_pointer_hovers_delete() {
+      dialog.opened = true
+      dialog.selectedIndex = 1
+      keyClick(Qt.Key_Return)
+      compare(dialog.answers, [[Qt.Key_Return, 0]])
+    }
+
+    function test_the_arrows_and_tab_switch_the_delete_confirmation_choice() {
+      dialog.opened = true
+      keyClick(Qt.Key_Right)
+      keyClick(Qt.Key_Return)
+      keyClick(Qt.Key_Tab)
       keyClick(Qt.Key_Space)
+      compare(dialog.answers, [[Qt.Key_Return, 1], [Qt.Key_Return, 0]])
+    }
+
+    function test_while_the_delete_confirmation_is_open_no_key_reaches_the_panel() {
+      dialog.opened = true
       keyClick(Qt.Key_Tab)
       keyClick(Qt.Key_J)
-      compare(dialog.keys, [Qt.Key_Return, Qt.Key_Tab, Qt.Key_J])
+      compare(dialog.answers, [[Qt.Key_J, 1]])
       verify(walker.keyTarget.activeFocus)
       compare(itemSpy.count, 0)
     }

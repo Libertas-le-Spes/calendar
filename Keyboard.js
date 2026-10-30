@@ -54,6 +54,19 @@ function scrollToShow(contentY, viewHeight, contentHeight, itemTop, itemHeight, 
 
 var KEY_SPACE = 0x20
 var KEY_RETURN = 0x01000004
+var KEY_ENTER = 0x01000005
+var CONFIRM_CANCEL = 0
+
+var CONFIRM_TOGGLES = {}
+CONFIRM_TOGGLES[KEY_LEFT] = true
+CONFIRM_TOGGLES[KEY_RIGHT] = true
+CONFIRM_TOGGLES[KEY_TAB] = true
+CONFIRM_TOGGLES[KEY_BACKTAB] = true
+
+var CONFIRM_ANSWERS = {}
+CONFIRM_ANSWERS[KEY_RETURN] = true
+CONFIRM_ANSWERS[KEY_ENTER] = true
+CONFIRM_ANSWERS[KEY_SPACE] = true
 
 function keyAction(key, modifiers, text, state) {
   if (state.dialogOpen) return { action: "dialog", step: 0 }
@@ -67,7 +80,8 @@ function keyAction(key, modifiers, text, state) {
   return { action: "none", step: 0 }
 }
 
-function dialogKey(key) {
-  if (key === KEY_SPACE) return { key: KEY_RETURN }
-  return { key: key }
+function confirmKey(key, choice) {
+  if (CONFIRM_TOGGLES[key]) return { choice: 1 - choice, key: 0 }
+  if (CONFIRM_ANSWERS[key]) return { choice: choice, key: KEY_RETURN }
+  return { choice: choice, key: key }
 }

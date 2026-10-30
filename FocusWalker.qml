@@ -12,6 +12,7 @@ Item {
   property var takesText: null
   property bool pointerJustUsed: false
   property Item lastFocused: null
+  property int confirmChoice: Keyboard.CONFIRM_CANCEL
 
   readonly property Item keyTarget: keyFocus
   readonly property Item focused: Window.activeFocusItem
@@ -35,6 +36,11 @@ Item {
   Item {
     id: keyFocus
     focus: true
+  }
+
+  Connections {
+    target: walker.confirmDialog
+    function onOpenedChanged() { walker.startConfirm() }
   }
 
   Item {
@@ -73,8 +79,17 @@ Item {
     }
   }
 
+  function startConfirm() {
+    if (!walker.confirmDialog.opened) return
+    walker.confirmChoice = Keyboard.CONFIRM_CANCEL
+    walker.confirmDialog.selectedIndex = walker.confirmChoice
+  }
+
   function answerDialog(step, event) {
-    walker.confirmDialog.handleKey(Keyboard.dialogKey(event.key))
+    var answer = Keyboard.confirmKey(event.key, walker.confirmChoice)
+    walker.confirmChoice = answer.choice
+    walker.confirmDialog.selectedIndex = answer.choice
+    if (answer.key !== 0) walker.confirmDialog.handleKey({ key: answer.key })
   }
 
   function walkFrom(step, event) {
@@ -116,7 +131,20 @@ Item {
   }
 
   function focusKeys() {
-    Qt.callLater(function() { keyFocus.forceActiveFocus() })
+    Qt.callLater(walker.takeKeys)
+  }
+
+  function takeKeys() {
+    keyFocus.forceActiveFocus()
+  }
+
+  function giveBack(from) {
+    if (from && from.visible && walker.takesText(from)) return Qt.callLater(walker.focusOn, from)
+    walker.focusKeys()
+  }
+
+  function focusOn(item) {
+    item.forceActiveFocus()
   }
 
   function recover() {
@@ -128,7 +156,7 @@ Item {
     walker.lastFocused = item
     if (!walker.opened) return
     if (walker.lost(item)) return walker.focusKeys()
-    if (walker.takenByMouse(item)) return walker.focusKeys()
+    if (walker.takenByMouse(item)) return walker.giveBack(from)
     if (walker.leftTheForm(item)) return Qt.callLater(walker.returnToForm, item, from)
     walker.ensureVisible(item)
   }

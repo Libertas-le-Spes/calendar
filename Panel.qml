@@ -442,7 +442,6 @@ Panel {
 
   onPendingDeleteChanged: {
     if (root.pendingDelete === null) return
-    confirmDialog.selectedIndex = 0
     root.focusKeys()
   }
 

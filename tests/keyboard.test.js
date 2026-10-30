@@ -73,6 +73,7 @@ test('the key numbers are the ones Qt sends', () => {
   assert.equal(Keyboard.KEY_TAB, 16777217)
   assert.equal(Keyboard.KEY_BACKTAB, 16777218)
   assert.equal(Keyboard.KEY_RETURN, 16777220)
+  assert.equal(Keyboard.KEY_ENTER, 16777221)
   assert.equal(Keyboard.KEY_LEFT, 16777234)
   assert.equal(Keyboard.KEY_UP, 16777235)
   assert.equal(Keyboard.KEY_RIGHT, 16777236)
@@ -112,7 +113,20 @@ test('Ctrl+Tab switches panels, and stays put while the form is open', () => {
   assert.equal(Keyboard.keyAction(Keyboard.KEY_TAB, Keyboard.CONTROL, '', stateWith({ formOpen: true })).action, 'stay')
 })
 
-test('Space in the delete confirmation answers like Enter', () => {
-  assert.deepEqual(Keyboard.dialogKey(Keyboard.KEY_SPACE), { key: Keyboard.KEY_RETURN })
-  assert.deepEqual(Keyboard.dialogKey(Keyboard.KEY_LEFT), { key: Keyboard.KEY_LEFT })
+test('Left, Right, Tab and Shift+Tab switch the delete confirmation choice and send nothing', () => {
+  for (const key of [Keyboard.KEY_LEFT, Keyboard.KEY_RIGHT, Keyboard.KEY_TAB, Keyboard.KEY_BACKTAB]) {
+    assert.deepEqual(Keyboard.confirmKey(key, 0), { choice: 1, key: 0 })
+    assert.deepEqual(Keyboard.confirmKey(key, 1), { choice: 0, key: 0 })
+  }
+})
+
+test('Enter, Return and Space answer the delete confirmation with the choice kept', () => {
+  for (const key of [Keyboard.KEY_RETURN, Keyboard.KEY_ENTER, Keyboard.KEY_SPACE]) {
+    assert.deepEqual(Keyboard.confirmKey(key, 1), { choice: 1, key: Keyboard.KEY_RETURN })
+    assert.deepEqual(Keyboard.confirmKey(key, 0), { choice: 0, key: Keyboard.KEY_RETURN })
+  }
+})
+
+test('any other key goes to the delete confirmation as it is', () => {
+  assert.deepEqual(Keyboard.confirmKey(0x01000000, 1), { choice: 1, key: 0x01000000 })
 })
