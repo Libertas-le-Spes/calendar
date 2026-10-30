@@ -23,7 +23,7 @@ Item {
   signal canceled()
 
   visible: opened
-  onOpenedChanged: if (opened) Qt.callLater(firstButton.forceActiveFocus)
+  onOpenedChanged: if (opened) Qt.callLater(cancelButton.forceActiveFocus)
 
   readonly property var buttons: [cancelButton, secondButton, firstButton]
 
@@ -34,9 +34,13 @@ Item {
 
   Keys.onPressed: function(event) {
     var step = Keyboard.arrowStep(event.key)
-    if (Keyboard.isTab(event.key)) step = Keyboard.tabStep(event.key, event.modifiers)
     if (step === 0) return
     root.moveFocus(step)
+    event.accepted = true
+  }
+
+  function walkButtons(event) {
+    root.moveFocus(Keyboard.tabStep(event.key, event.modifiers))
     event.accepted = true
   }
 
@@ -90,6 +94,8 @@ Item {
         Button {
           id: firstButton
           focusable: true
+          Keys.onTabPressed: function(event) { root.walkButtons(event) }
+          Keys.onBacktabPressed: function(event) { root.walkButtons(event) }
           FocusRing {}
           text: root.firstText
           bordered: true
@@ -100,6 +106,8 @@ Item {
         Button {
           id: secondButton
           focusable: true
+          Keys.onTabPressed: function(event) { root.walkButtons(event) }
+          Keys.onBacktabPressed: function(event) { root.walkButtons(event) }
           FocusRing {}
           text: root.secondText
           bordered: true
@@ -110,6 +118,8 @@ Item {
         Button {
           id: cancelButton
           focusable: true
+          Keys.onTabPressed: function(event) { root.walkButtons(event) }
+          Keys.onBacktabPressed: function(event) { root.walkButtons(event) }
           FocusRing {}
           text: Strings.tr(root.language, "common.cancel")
           fontFamily: root.fontFamily

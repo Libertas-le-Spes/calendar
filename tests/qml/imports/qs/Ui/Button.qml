@@ -14,6 +14,8 @@ Rectangle {
   implicitHeight: 20
   activeFocusOnTab: focusable
   Keys.onReturnPressed: if (focusable) root.clicked()
+  Keys.onEnterPressed: if (focusable) root.clicked()
+  Keys.onSpacePressed: if (focusable) root.clicked()
 
   MouseArea {
     anchors.fill: parent
