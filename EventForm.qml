@@ -30,6 +30,7 @@ Column {
   property bool busy: false
 
   signal submitted(var form)
+  signal walkRequested(int step)
   signal canceled()
 
   property var form: ({})
@@ -248,6 +249,8 @@ Column {
     label: root.tr("form.allDay")
     inline: true
     ToggleSwitch {
+      KeyPress { onActivated: root.toggleAllDay() }
+
       checked: root.form.allDay === true
       foreground: root.foreground
       onToggled: root.toggleAllDay()
@@ -285,6 +288,8 @@ Column {
     id: meetRow
     label: root.tr("form.meet")
     ToggleSwitch {
+      KeyPress { onActivated: root.update({ meet: !(root.form.meet === true) }) }
+
       id: meetToggle
       checked: root.form.meet === true
       foreground: root.foreground
@@ -338,6 +343,9 @@ Column {
       font.pixelSize: Style.font.body
       onTextChanged: if (activeFocus) root.update({ description: text })
       Keys.onEscapePressed: function(event) { root.canceled(); event.accepted = true }
+      activeFocusOnTab: true
+      Keys.onTabPressed: function(event) { root.walkRequested(1); event.accepted = true }
+      Keys.onBacktabPressed: function(event) { root.walkRequested(-1); event.accepted = true }
 
       Text {
         textFormat: Text.PlainText

@@ -113,6 +113,8 @@ Column {
 
     // Bordered, so it reads as a button and not as a stray glyph.
     PanelActionButton {
+      focusable: true
+      FocusRing {}
       id: closeButton
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
@@ -255,6 +257,8 @@ Column {
         cursorShape: Qt.PointingHandCursor
         onClicked: root.linkOpened(root.mapsUrl)
       }
+
+      KeyPress { onActivated: root.linkOpened(root.mapsUrl) }
     }
   }
 

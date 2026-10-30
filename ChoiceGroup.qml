@@ -58,6 +58,8 @@ Column {
       model: root.options
 
       Button {
+        focusable: true
+        FocusRing {}
         required property var modelData
         text: modelData.label
         selected: modelData.value === root.value

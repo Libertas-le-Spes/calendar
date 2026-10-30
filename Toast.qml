@@ -52,6 +52,8 @@ Rectangle {
   }
 
   PanelActionButton {
+    focusable: true
+    FocusRing {}
     id: dismiss
     anchors.right: parent.right
     anchors.rightMargin: Style.space(6)

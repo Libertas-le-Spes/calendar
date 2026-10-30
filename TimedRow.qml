@@ -15,6 +15,13 @@ Rectangle {
 
   property var item: ({})
   property bool selected: false
+  property bool listFocused: false
+  readonly property bool keyed: selected && listFocused
+
+  FocusRing {
+    shown: root.selected && root.listFocused
+    outset: 0
+  }
   property bool snoozable: false
   property string snoozeText: ""
   property bool isToday: false
