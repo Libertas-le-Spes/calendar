@@ -137,11 +137,8 @@ Column {
       }
 
       KeyPress {
-
         enabled: parent.missing
-
         onActivated: root.setupCommandCopyRequested()
-
       }
     }
   }

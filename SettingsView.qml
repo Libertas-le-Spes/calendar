@@ -184,9 +184,9 @@ Item {
         }
 
         KeyPress {
-            ringOutset: 0
-            onActivated: root.section = navItem.modelData.id
-          }
+          ringOutset: 0
+          onActivated: root.section = navItem.modelData.id
+        }
       }
     }
   }
