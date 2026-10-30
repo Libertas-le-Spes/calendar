@@ -11,6 +11,7 @@ Item {
   property Item confirmDialog: null
   property var takesText: null
   property bool pointerJustUsed: false
+  property Item lastFocused: null
 
   readonly property Item keyTarget: keyFocus
   readonly property Item focused: Window.activeFocusItem
@@ -36,9 +37,14 @@ Item {
     focus: true
   }
 
-  PointHandler {
-    acceptedButtons: Qt.AllButtons
-    onActiveChanged: walker.notePointer(active)
+  Item {
+    anchors.fill: parent
+    z: 1000
+
+    PointHandler {
+      acceptedButtons: Qt.AllButtons
+      onActiveChanged: walker.notePointer(active)
+    }
   }
 
   function notePointer(pressed) {
@@ -118,10 +124,12 @@ Item {
   }
 
   function settle(item) {
+    var from = walker.lastFocused
+    walker.lastFocused = item
     if (!walker.opened) return
     if (walker.lost(item)) return walker.focusKeys()
     if (walker.takenByMouse(item)) return walker.focusKeys()
-    if (walker.leftTheForm(item)) return walker.returnToForm(item)
+    if (walker.leftTheForm(item)) return Qt.callLater(walker.returnToForm, item, from)
     walker.ensureVisible(item)
   }
 
@@ -142,17 +150,25 @@ Item {
     return walker.holds(walker, item) && !walker.holds(fence, item)
   }
 
-  function returnToForm(item) {
+  function returnToForm(item, from) {
     var fence = walker.fence()
+    if (!fence || !item.activeFocus) return
+    var lookBack = !walker.followsInTabOrder(from, item, true)
+    var lookAhead = !walker.followsInTabOrder(from, item, false)
     var back = item
     var ahead = item
     for (var tries = 0; tries < 1000; tries++) {
       back = back.nextItemInFocusChain(false)
-      if (walker.holds(fence, back)) return back.forceActiveFocus(Qt.BacktabFocusReason)
+      if (lookBack && walker.holds(fence, back)) return back.forceActiveFocus(Qt.BacktabFocusReason)
       ahead = ahead.nextItemInFocusChain(true)
-      if (walker.holds(fence, ahead)) return ahead.forceActiveFocus(Qt.TabFocusReason)
+      if (lookAhead && walker.holds(fence, ahead)) return ahead.forceActiveFocus(Qt.TabFocusReason)
     }
     walker.focusKeys()
+  }
+
+  function followsInTabOrder(from, item, forward) {
+    if (!from) return false
+    return from.nextItemInFocusChain(forward) === item
   }
 
   function holds(ancestor, item) {
