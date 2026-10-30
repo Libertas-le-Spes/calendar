@@ -578,9 +578,10 @@ from your Google Cloud console to revoke properly.
 ```bash
 cd sync && PYTHONPATH=. python3 -m unittest discover -s ../tests -t .. -v
 node --test tests/*.test.js
+QT_QPA_PLATFORM=offscreen /usr/lib/qt6/bin/qmltestrunner -import tests/qml/imports -input tests/qml
 ```
 
-The same two commands run on every pull request, in an Arch Linux container
+The same three commands run on every pull request, in an Arch Linux container
 (`.github/workflows/tests.yml`). `tests/test_architecture.py` holds the rules
 the code relies on: text from events is always shown as plain text, nothing
 starts a process through a shell, and the workflow keeps read-only
@@ -589,11 +590,14 @@ limit is there.
 
 No dependencies, no dev dependencies. The Python sync is standard library only
 and the QML logic lives in `Model.js` and `QuickAddParser.js`, which load under
-Node precisely so they can be tested.
+Node precisely so they can be tested. The QML tests use Qt's own
+`qmltestrunner`, which comes with the Qt that Omarchy's shell runs on.
 
-`Panel.qml` and `BarWidget.qml` are not unit tested. Quickshell widgets need a
-live shell to render, and building that harness would cost more than it catches.
-Anything worth testing was deliberately pushed down into those two files.
+The keyboard walker, the choice dialog and the key-press handle are tested in
+`tests/qml`, against small stand-ins for the shell's style and button in
+`tests/qml/imports`. The stand-in button takes focus when it is clicked, as the
+shell's does. `Panel.qml` and `BarWidget.qml` are not unit tested: they need the
+whole shell to load, so what is worth testing lives in the files above.
 
 ## License
 
