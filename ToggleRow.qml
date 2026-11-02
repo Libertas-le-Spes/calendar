@@ -34,6 +34,11 @@ Rectangle {
   }
   TapHandler { onTapped: toggle.activated() }
 
+  KeyPress {
+    ringOutset: 0
+    onActivated: toggle.activated()
+  }
+
   Rectangle {
     id: swatchDot
     visible: toggle.swatch.a > 0

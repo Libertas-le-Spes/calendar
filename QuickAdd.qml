@@ -157,8 +157,12 @@ Rectangle {
           cursorShape: Qt.WhatsThisCursor
         }
 
+        KeyPress {
+          id: helpKeys
+        }
+
         PanelToolTip {
-          visible: helpHover.hovered
+          visible: helpHover.hovered || helpKeys.activeFocus
           text: root.tr("quick.help")
           fontFamily: root.fontFamily
         }

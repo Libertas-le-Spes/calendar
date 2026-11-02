@@ -26,7 +26,9 @@ Column {
     { keys: "← →", label: "keys.days" },
     { keys: "↑ ↓", label: "keys.weeks" },
     { keys: "[ ]", label: "keys.month" },
-    { keys: "t", label: "keys.today" }
+    { keys: "t", label: "keys.today" },
+    { keys: "⇥", label: "keys.walk" },
+    { keys: "^⇥", label: "keys.panels" }
   ]
 
   spacing: Style.space(8)

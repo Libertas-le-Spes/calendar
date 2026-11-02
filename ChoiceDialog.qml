@@ -3,6 +3,7 @@ import qs.Commons
 import qs.Ui
 
 import "Strings.js" as Strings
+import "Keyboard.js" as Keyboard
 
 // A question with two answers and Cancel, for "Send invitation emails?" and
 // "This event or all events?". Built like the shell's ConfirmDialog, which
@@ -22,6 +23,34 @@ Item {
   signal canceled()
 
   visible: opened
+  onOpenedChanged: if (opened) Qt.callLater(cancelButton.forceActiveFocus)
+
+  readonly property var buttons: [cancelButton, secondButton, firstButton]
+
+  Keys.onEscapePressed: function(event) {
+    root.canceled()
+    event.accepted = true
+  }
+
+  Keys.onPressed: function(event) {
+    var step = Keyboard.arrowStep(event.key)
+    if (step === 0) return
+    root.moveFocus(step)
+    event.accepted = true
+  }
+
+  function walkButtons(event) {
+    root.moveFocus(Keyboard.tabStep(event.key, event.modifiers))
+    event.accepted = true
+  }
+
+  function moveFocus(step) {
+    var index = 0
+    for (var i = 0; i < root.buttons.length; i++)
+      if (root.buttons[i].activeFocus) index = i
+    var next = (index + step + root.buttons.length) % root.buttons.length
+    root.buttons[next].forceActiveFocus()
+  }
 
   Rectangle {
     anchors.fill: parent
@@ -63,6 +92,11 @@ Item {
         layoutDirection: Qt.RightToLeft
 
         Button {
+          id: firstButton
+          focusable: true
+          Keys.onTabPressed: function(event) { root.walkButtons(event) }
+          Keys.onBacktabPressed: function(event) { root.walkButtons(event) }
+          FocusRing {}
           text: root.firstText
           bordered: true
           fontFamily: root.fontFamily
@@ -70,6 +104,11 @@ Item {
         }
 
         Button {
+          id: secondButton
+          focusable: true
+          Keys.onTabPressed: function(event) { root.walkButtons(event) }
+          Keys.onBacktabPressed: function(event) { root.walkButtons(event) }
+          FocusRing {}
           text: root.secondText
           bordered: true
           fontFamily: root.fontFamily
@@ -77,6 +116,11 @@ Item {
         }
 
         Button {
+          id: cancelButton
+          focusable: true
+          Keys.onTabPressed: function(event) { root.walkButtons(event) }
+          Keys.onBacktabPressed: function(event) { root.walkButtons(event) }
+          FocusRing {}
           text: Strings.tr(root.language, "common.cancel")
           fontFamily: root.fontFamily
           onClicked: root.canceled()

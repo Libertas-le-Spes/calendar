@@ -56,6 +56,8 @@ Column {
       spacing: Style.space(1)
 
       Button {
+        focusable: true
+        FocusRing {}
         text: day.modelData.label
         foreground: Util.alpha(root.foreground, 0.85)
         fontFamily: root.fontFamily
@@ -86,6 +88,8 @@ Column {
             cursorShape: Qt.PointingHandCursor
             onClicked: root.itemSelected(row.modelData)
           }
+
+          KeyPress { onActivated: root.itemSelected(row.modelData) }
 
           Text {
             textFormat: Text.PlainText
@@ -131,6 +135,8 @@ Column {
           }
 
           PanelActionButton {
+            focusable: true
+            FocusRing {}
             id: joinButton
             visible: row.meetingUrl !== ""
             anchors.right: parent.right

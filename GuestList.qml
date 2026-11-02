@@ -165,6 +165,8 @@ Column {
       }
 
       PanelActionButton {
+        focusable: true
+        FocusRing {}
         id: removeButton
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter

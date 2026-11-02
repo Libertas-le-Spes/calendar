@@ -16,7 +16,7 @@ jobs:
       image: archlinux@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413
     steps:
       - name: Install the packages the plugin runs with on Omarchy
-        run: pacman -Syu --noconfirm --needed git python python-icalendar python-recurring-ical-events nodejs
+        run: pacman -Syu --noconfirm --needed git python python-icalendar python-recurring-ical-events nodejs qt6-declarative
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
@@ -25,3 +25,7 @@ jobs:
         run: PYTHONPATH=. python3 -m unittest discover -s ../tests -t .. -v
       - name: JavaScript tests
         run: node --test tests/*.test.js
+      - name: QML tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: /usr/lib/qt6/bin/qmltestrunner -import tests/qml/imports -input tests/qml

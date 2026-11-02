@@ -60,9 +60,13 @@ Item {
       cursorShape: Qt.PointingHandCursor
       onClicked: root.stepMonth(parent.delta)
     }
+
+    KeyPress { onActivated: root.stepMonth(parent.delta) }
   }
 
   Button {
+    focusable: true
+    FocusRing {}
     id: trigger
     width: parent.width
     text: {
@@ -185,6 +189,8 @@ Item {
                 popup.close()
               }
             }
+
+            KeyPress { onActivated: { root.picked(modelData.key); popup.close() } }
           }
         }
       }

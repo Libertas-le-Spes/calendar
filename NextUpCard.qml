@@ -83,6 +83,8 @@ Rectangle {
         cursorShape: Qt.PointingHandCursor
         onClicked: root.opened()
       }
+
+      KeyPress { onActivated: root.opened() }
     }
 
     Text {

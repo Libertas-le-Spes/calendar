@@ -21,6 +21,16 @@ Rectangle {
 
   signal clicked()
 
+  activeFocusOnTab: enabled && visible
+  Keys.onReturnPressed: function(event) { root.press(event) }
+  Keys.onEnterPressed: function(event) { root.press(event) }
+  Keys.onSpacePressed: function(event) { root.press(event) }
+
+  function press(event) {
+    root.clicked()
+    event.accepted = true
+  }
+
   readonly property bool hot: mouse.containsMouse && enabled
   readonly property color labelColor: filled ? Color.background : accent
   readonly property int padX: large ? Style.space(16) : (text === "" ? padY : Style.spacing.controlPaddingX)
@@ -72,8 +82,10 @@ Rectangle {
     onClicked: root.clicked()
   }
 
+  FocusRing {}
+
   PanelToolTip {
-    visible: root.tooltipText !== "" && mouse.containsMouse
+    visible: root.tooltipText !== "" && (mouse.containsMouse || root.activeFocus)
     text: root.tooltipText
     fontFamily: root.fontFamily
   }
