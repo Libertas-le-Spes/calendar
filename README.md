@@ -589,7 +589,7 @@ permissions and pinned actions. `docs/security-review.md` says why each
 limit is there.
 
 No dependencies, no dev dependencies. The Python sync is standard library only
-and the QML logic lives in `Model.js` and `QuickAddParser.js`, which load under
+and the QML logic lives in `Model.js`, `QuickAddParser.js` and `Keyboard.js`, which load under
 Node precisely so they can be tested. The QML tests use Qt's own
 `qmltestrunner`, which comes with the Qt that Omarchy's shell runs on.
 

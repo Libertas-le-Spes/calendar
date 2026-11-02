@@ -41,6 +41,7 @@ Item {
   Connections {
     target: walker.confirmDialog
     function onOpenedChanged() { walker.startConfirm() }
+    function onSelectedIndexChanged() { walker.followPointer() }
   }
 
   Item {
@@ -82,6 +83,11 @@ Item {
   function startConfirm() {
     if (!walker.confirmDialog.opened) return
     walker.confirmChoice = Keyboard.CONFIRM_CANCEL
+    walker.confirmDialog.selectedIndex = walker.confirmChoice
+  }
+
+  function followPointer() {
+    if (walker.confirmDialog.selectedIndex === Keyboard.CONFIRM_CANCEL) walker.confirmChoice = Keyboard.CONFIRM_CANCEL
     walker.confirmDialog.selectedIndex = walker.confirmChoice
   }
 
@@ -138,13 +144,10 @@ Item {
     keyFocus.forceActiveFocus()
   }
 
-  function giveBack(from) {
-    if (from && from.visible && walker.takesText(from)) return Qt.callLater(walker.focusOn, from)
-    walker.focusKeys()
-  }
-
-  function focusOn(item) {
-    item.forceActiveFocus()
+  function giveBack(item, from) {
+    if (!item.activeFocus) return
+    if (from && from.visible && walker.takesText(from)) return from.forceActiveFocus()
+    walker.takeKeys()
   }
 
   function recover() {
@@ -156,7 +159,7 @@ Item {
     walker.lastFocused = item
     if (!walker.opened) return
     if (walker.lost(item)) return walker.focusKeys()
-    if (walker.takenByMouse(item)) return walker.giveBack(from)
+    if (walker.takenByMouse(item)) return Qt.callLater(walker.giveBack, item, from)
     if (walker.leftTheForm(item)) return Qt.callLater(walker.returnToForm, item, from)
     walker.ensureVisible(item)
   }
@@ -220,9 +223,14 @@ Item {
     var cursor = item
     while (cursor) {
       var parentItem = cursor.parent
-      if (parentItem && parentItem.parent && parentItem.parent.contentItem === parentItem) return parentItem.parent
+      if (walker.scrollsWith(parentItem)) return parentItem.parent
       cursor = parentItem
     }
     return null
+  }
+
+  function scrollsWith(content) {
+    if (!content || !content.parent) return false
+    return content.parent.contentItem === content && "contentY" in content.parent
   }
 }

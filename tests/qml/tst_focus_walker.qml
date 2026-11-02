@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtTest
 import qs.Ui
 import "../.."
@@ -68,11 +69,43 @@ Item {
         clip: true
         Button { id: farDown; y: 150; focusable: true }
       }
+
+      Item {
+        id: dropdown
+        width: 40
+        height: 20
+        activeFocusOnTab: true
+
+        MouseArea {
+          anchors.fill: parent
+          onClicked: scene.openDropdown()
+        }
+
+        Popup {
+          id: dropdownList
+          y: 20
+          width: 40
+          height: 60
+          focus: true
+          onOpened: options.forceActiveFocus()
+
+          Item { id: options; anchors.fill: parent; focus: true }
+        }
+      }
     }
   }
 
   SignalSpy { id: switchSpy; target: walker; signalName: "switchPanelRequested" }
   SignalSpy { id: itemSpy; target: walker; signalName: "itemStepRequested" }
+
+  function openDropdown() {
+    dropdown.forceActiveFocus()
+    dropdownList.open()
+  }
+
+  function panelHasKeys() {
+    return walker.keyTarget.activeFocus
+  }
 
   function takesText(item) {
     return item !== null && item !== walker.keyTarget && "cursorPosition" in item && !item.readOnly
@@ -84,11 +117,13 @@ Item {
 
     function init() {
       failOnWarning(/Binding loop/)
+      failOnWarning(/FocusWalker\.qml/)
       walker.opened = true
       walker.formOpen = false
       dialog.opened = false
       dialog.selectedIndex = 1
       dialog.answers = []
+      dropdownList.close()
       loader.active = false
       first.visible = true
       scroller.contentY = 0
@@ -129,19 +164,19 @@ Item {
     function test_a_hidden_control_hands_the_keys_back_to_the_panel() {
       first.forceActiveFocus()
       first.visible = false
-      tryVerify(function() { return walker.keyTarget.activeFocus })
+      tryVerify(scene.panelHasKeys)
     }
 
     function test_a_control_whose_loader_unloads_hands_the_keys_back_to_the_panel() {
       loader.active = true
       loader.item.forceActiveFocus()
       loader.active = false
-      tryVerify(function() { return walker.keyTarget.activeFocus })
+      tryVerify(scene.panelHasKeys)
     }
 
     function test_a_click_on_a_button_hands_the_keys_back_to_the_panel() {
       mouseClick(second)
-      tryVerify(function() { return walker.keyTarget.activeFocus })
+      tryVerify(scene.panelHasKeys)
     }
 
     function test_a_click_on_a_button_while_typing_gives_the_keys_back_to_the_text_field() {
@@ -156,9 +191,24 @@ Item {
       verify(field.activeFocus)
     }
 
+    function test_a_dropdown_opened_by_a_click_keeps_its_keys() {
+      mouseClick(dropdown)
+      tryVerify(function() { return options.activeFocus })
+      wait(0)
+      verify(options.activeFocus)
+    }
+
+    function test_a_dropdown_opened_by_a_click_while_typing_keeps_its_keys() {
+      field.forceActiveFocus()
+      mouseClick(dropdown)
+      tryVerify(function() { return options.activeFocus })
+      wait(0)
+      verify(options.activeFocus)
+    }
+
     function test_tab_after_a_click_walks_and_is_not_taken_for_a_click() {
       mouseClick(second)
-      tryVerify(function() { return walker.keyTarget.activeFocus })
+      tryVerify(scene.panelHasKeys)
       keyClick(Qt.Key_Tab)
       wait(0)
       verify(first.activeFocus)
@@ -214,6 +264,15 @@ Item {
     function test_enter_answers_the_keyboard_choice_even_when_the_pointer_hovers_delete() {
       dialog.opened = true
       dialog.selectedIndex = 1
+      compare(dialog.selectedIndex, 0)
+      keyClick(Qt.Key_Return)
+      compare(dialog.answers, [[Qt.Key_Return, 0]])
+    }
+
+    function test_a_hover_over_cancel_after_choosing_delete_shows_and_answers_cancel() {
+      dialog.opened = true
+      keyClick(Qt.Key_Right)
+      dialog.selectedIndex = 0
       keyClick(Qt.Key_Return)
       compare(dialog.answers, [[Qt.Key_Return, 0]])
     }
